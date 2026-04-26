@@ -1,0 +1,150 @@
+<Window x:Class="TensorLay.Views.PairingWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Connect to VPS" Width="560" Height="620"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="White"
+        Foreground="#1A1A1A"
+        FontFamily="Segoe UI"
+        WindowStyle="SingleBorderWindow"
+        UseLayoutRounding="True">
+
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="40"
+                      ResizeBorderThickness="0"
+                      GlassFrameThickness="0,0,0,1"
+                      CornerRadius="0"/>
+    </WindowChrome.WindowChrome>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="40"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Title bar (matching main window style) -->
+        <Border Grid.Row="0" Background="White" BorderBrush="#F0EDE8" BorderThickness="0,0,0,1">
+            <Grid>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
+                            HorizontalAlignment="Left" Margin="16,0,0,0">
+                    <Grid Width="22" Height="22" Margin="0,0,8,0">
+                        <Ellipse Width="13" Height="13" StrokeThickness="1.8"
+                                 Stroke="#6C5CE7" HorizontalAlignment="Left"/>
+                        <Ellipse Width="13" Height="13" StrokeThickness="1.8"
+                                 Stroke="#2ECC71" HorizontalAlignment="Right"/>
+                    </Grid>
+                    <TextBlock FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center">
+                        <Run Text="Tensor" Foreground="#6C5CE7"/><Run Text="Lay" Foreground="#2ECC71"/>
+                    </TextBlock>
+                    <TextBlock Text="  —  Connect to VPS" FontSize="12" Foreground="#9B9B9B"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+                <!-- Close button -->
+                <Button Click="OnCancelClicked" Width="46" HorizontalAlignment="Right"
+                        VerticalAlignment="Stretch" Background="Transparent"
+                        BorderThickness="0" Cursor="Hand"
+                        WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="Transparent">
+                                <Path x:Name="X" Data="M0,0 L10,10 M10,0 L0,10"
+                                      Stroke="#6B6B6B" StrokeThickness="1"
+                                      Width="10" Height="10" Stretch="None"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="#E81123"/>
+                                    <Setter TargetName="X" Property="Stroke" Value="White"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </Grid>
+        </Border>
+
+        <!-- Content -->
+        <Border Grid.Row="1" Background="#FAFAF7" Padding="32,20,32,20">
+            <DockPanel>
+
+                <!-- Header -->
+                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,16">
+                    <TextBlock Text="Connect to VPS" FontSize="18" FontWeight="Bold"
+                               Foreground="#1A1A1A" Margin="0,0,0,6"/>
+                    <TextBlock FontSize="12" Foreground="#6B6B6B" TextWrapping="Wrap" LineHeight="17">
+                        Run this command on your VPS to install the relay:
+                    </TextBlock>
+                    <Border Background="White" CornerRadius="8" Padding="12,8" Margin="0,8,0,0"
+                            BorderBrush="#EBEBEB" BorderThickness="1">
+                        <Grid>
+                            <TextBox x:Name="InstallCmd" IsReadOnly="True" BorderThickness="0"
+                                     Background="Transparent" FontFamily="Consolas" FontSize="11.5"
+                                     Foreground="#1A1A1A" VerticalAlignment="Center"
+                                     Text="curl -sL https://tensorlay.com/install.sh | sudo bash"/>
+                            <Button HorizontalAlignment="Right" VerticalAlignment="Center"
+                                    Click="OnCopyCommand"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Padding="10,4" Cursor="Hand"
+                                    WindowChrome.IsHitTestVisibleInChrome="True">
+                                <TextBlock x:Name="CopyBtnText" Text="Copy" FontSize="11" Foreground="#6B6B6B"/>
+                            </Button>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+
+                <!-- Buttons (bottom) -->
+                <DockPanel DockPanel.Dock="Bottom" LastChildFill="False" Margin="0,20,0,0">
+                    <TextBlock x:Name="StatusText" VerticalAlignment="Center"
+                               FontSize="12" Foreground="#9B9B9B"
+                               MaxWidth="260" TextWrapping="Wrap"/>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <Button x:Name="CancelBtn" Click="OnCancelClicked"
+                                Style="{StaticResource SecondaryButton}" Padding="18,9" FontSize="13">
+                            <TextBlock Text="Cancel" Foreground="#6B6B6B"/>
+                        </Button>
+                        <Button x:Name="PairBtn" Click="OnPairClicked" Margin="10,0,0,0"
+                                Style="{StaticResource PrimaryButton}" Padding="24,9" FontSize="13">
+                            <TextBlock x:Name="PairBtnText" Text="Connect" Foreground="White" FontWeight="SemiBold"/>
+                        </Button>
+                    </StackPanel>
+                </DockPanel>
+
+                <!-- Form -->
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Text="VPS IP ADDRESS" FontSize="10" FontWeight="SemiBold"
+                                   Foreground="#9B9B9B" Margin="0,0,0,5"/>
+                        <TextBox x:Name="VpsIpInput" Margin="0,0,0,14"
+                                 FontSize="13" Padding="10,8"/>
+
+                        <TextBlock Text="PAIRING CODE" FontSize="10" FontWeight="SemiBold"
+                                   Foreground="#9B9B9B" Margin="0,0,0,5"/>
+                        <TextBox x:Name="PairingCodeInput" Margin="0,0,0,16"
+                                 FontSize="15" FontWeight="Bold" Padding="10,8"
+                                 CharacterCasing="Upper" MaxLength="8"/>
+
+                        <Border Background="White" CornerRadius="8" Padding="16,14"
+                                BorderBrush="#EBEBEB" BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock Text="How it works" FontSize="12" FontWeight="SemiBold"
+                                           Foreground="#1A1A1A" Margin="0,0,0,8"/>
+                                <TextBlock FontSize="12" Foreground="#6B6B6B" TextWrapping="Wrap" LineHeight="20">
+                                    <Run FontWeight="SemiBold" Text="1."/><Run Text=" Run the command above on your VPS"/>
+                                    <LineBreak/>
+                                    <Run FontWeight="SemiBold" Text="2."/><Run Text=" Copy the pairing code it generates"/>
+                                    <LineBreak/>
+                                    <Run FontWeight="SemiBold" Text="3."/><Run Text=" Enter your VPS IP and code, click Connect"/>
+                                    <LineBreak/>
+                                    <Run FontWeight="SemiBold" Text="4."/><Run Text=" SSH keys are exchanged automatically"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

@@ -1,0 +1,42 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        working-directory: app
+        run: dotnet restore TensorLay/TensorLay.csproj
+
+      - name: Build
+        working-directory: app
+        run: |
+          dotnet build TensorLay/TensorLay.csproj \
+            -c Release \
+            --no-restore \
+            -p:EnableWindowsTargeting=true
+
+  relay-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bash syntax check
+        run: bash -n relay/install.sh
+
+      - name: Python syntax check
+        run: python3 -m py_compile relay/relay.py

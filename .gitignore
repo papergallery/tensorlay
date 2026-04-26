@@ -1,0 +1,39 @@
+# Project-specific instruction files (kept out of the public repo)
+CLAUDE.md
+**/CLAUDE.md
+.claude/
+
+# .NET build output
+bin/
+obj/
+**/bin/
+**/obj/
+*.dll
+*.pdb
+*.exe
+*.cache
+*.user
+*.suo
+
+# Release artifacts
+publish/
+publish-setup/
+releases/
+
+# Code-signing certificate (NEVER commit private keys)
+certs/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.userprefs
+
+# Design exploration / scratch images
+icons/
+9.jpg
+splash.png
+Screenshot_*.png
+
+# OS junk
+.DS_Store
+Thumbs.db

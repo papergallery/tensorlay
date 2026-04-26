@@ -1,0 +1,205 @@
+<UserControl x:Class="TensorLay.Views.ServiceCard"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:TensorLay.Converters"
+             FontFamily="Segoe UI">
+
+    <UserControl.Resources>
+        <converters:StateToColorConverter      x:Key="StateToColor"/>
+        <converters:StateToVisibilityConverter x:Key="StateToVisibility"/>
+        <converters:BoolToVisibilityConverter  x:Key="BoolToVisibility"/>
+        <converters:NullToVisibilityConverter  x:Key="NullToVisibility"/>
+    </UserControl.Resources>
+
+    <Border Background="White" CornerRadius="12" Padding="22"
+            BorderBrush="#EBEBEB" BorderThickness="1">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="12" ShadowDepth="1" Opacity="0.06" Color="#000000"/>
+        </Border.Effect>
+        <StackPanel>
+
+            <!-- Header row -->
+            <DockPanel LastChildFill="False" Margin="0,0,0,8">
+
+                <!-- Status indicator dot -->
+                <Ellipse Width="10" Height="10" VerticalAlignment="Center" Margin="0,0,10,0"
+                         Fill="{Binding State, Converter={StaticResource StateToColor}}"/>
+
+                <!-- Service name -->
+                <TextBlock Text="{Binding Definition.DisplayName}"
+                           FontWeight="SemiBold" FontSize="15" Foreground="#1A1A1A"
+                           VerticalAlignment="Center"/>
+
+                <!-- Port badge -->
+                <Border DockPanel.Dock="Right" CornerRadius="6" Padding="8,3"
+                        Background="#F7F6F3" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Definition.Port, StringFormat=':{0}'}"
+                               Foreground="#9B9B9B" FontSize="12"/>
+                </Border>
+
+                <!-- Status badge -->
+                <Border DockPanel.Dock="Right" CornerRadius="12" Padding="10,3" Margin="0,0,8,0"
+                        VerticalAlignment="Center">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Background" Value="#F7F6F3"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding State}" Value="Running">
+                                    <Setter Property="Background" Value="#E8F8F0"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding State}" Value="Error">
+                                    <Setter Property="Background" Value="#FEF2F2"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding State}" Value="Installing">
+                                    <Setter Property="Background" Value="#F0EBFF"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock Text="{Binding StatusText}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="#9B9B9B"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding State}" Value="Running">
+                                        <Setter Property="Foreground" Value="#2ECC71"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding State}" Value="Stopped">
+                                        <Setter Property="Foreground" Value="#9B9B9B"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding State}" Value="Error">
+                                        <Setter Property="Foreground" Value="#E74C3C"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding State}" Value="Starting">
+                                        <Setter Property="Foreground" Value="#6C5CE7"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Border>
+
+            </DockPanel>
+
+            <!-- Divider -->
+            <Border Height="1" Background="#F0F0F0" Margin="0,4,0,16"/>
+
+            <!-- Models list (visible when Running) -->
+            <ListBox ItemsSource="{Binding Models}"
+                     Background="Transparent" BorderThickness="0"
+                     MaxHeight="130" Margin="0,0,0,14"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     Visibility="{Binding State, Converter={StaticResource StateToVisibility},
+                                  ConverterParameter=Running}">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <DockPanel LastChildFill="True" Margin="0,1">
+                            <Button DockPanel.Dock="Right"
+                                    Content="&#xD7;" Width="24" Height="24"
+                                    FontSize="14" Padding="0"
+                                    Style="{StaticResource DangerButton}"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding DataContext.DeleteModelCommand,
+                                              RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                    CommandParameter="{Binding}"/>
+                            <TextBlock VerticalAlignment="Center" FontSize="12">
+                                <Run Text="{Binding FileName}" Foreground="#1A1A1A"/>
+                                <Run Text=" (" Foreground="#9B9B9B"/>
+                                <Run Text="{Binding DisplaySize}" Foreground="#9B9B9B"/>
+                                <Run Text=")" Foreground="#9B9B9B"/>
+                            </TextBlock>
+                        </DockPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Background"      Value="Transparent"/>
+                        <Setter Property="Foreground"      Value="#1A1A1A"/>
+                        <Setter Property="Padding"         Value="4,3"/>
+                        <Setter Property="BorderThickness" Value="0"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border Background="{TemplateBinding Background}"
+                                            Padding="{TemplateBinding Padding}"
+                                            CornerRadius="4">
+                                        <ContentPresenter/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Background" Value="#F5F3EE"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+            </ListBox>
+
+            <!-- Download model row -->
+            <DockPanel LastChildFill="True" Margin="0,0,0,10">
+                <Button DockPanel.Dock="Right" Content="Download"
+                        Style="{StaticResource PrimaryButton}"
+                        Padding="14,7" Margin="8,0,0,0" FontSize="12"
+                        Command="{Binding DownloadModelCommand}"/>
+                <TextBox Text="{Binding NewModelUrl, UpdateSourceTrigger=PropertyChanged}"
+                         ToolTip="Paste model URL here"/>
+            </DockPanel>
+
+            <!-- Download progress -->
+            <Border Margin="0,0,0,12"
+                    Visibility="{Binding ActiveDownload,
+                                 Converter={StaticResource NullToVisibility}}">
+                <StackPanel>
+                    <DockPanel LastChildFill="False" Margin="0,0,0,4">
+                        <TextBlock Text="{Binding ActiveDownload.TargetPath, FallbackValue=''}"
+                                   FontSize="11" Foreground="#9B9B9B"
+                                   TextTrimming="CharacterEllipsis" MaxWidth="300"/>
+                        <TextBlock DockPanel.Dock="Right"
+                                   Text="{Binding ActiveDownload.ProgressPercent,
+                                          StringFormat='{}{0:F0}%', FallbackValue='0%'}"
+                                   FontSize="11" Foreground="#9B9B9B"/>
+                    </DockPanel>
+                    <ProgressBar Height="6"
+                                 Value="{Binding ActiveDownload.ProgressPercent, FallbackValue=0}"
+                                 Minimum="0" Maximum="100"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Action buttons row -->
+            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+
+                <Button Content="Install" Margin="0,0,8,0"
+                        Style="{StaticResource PrimaryButton}"
+                        Padding="14,7"
+                        Command="{Binding InstallCommand}"
+                        Visibility="{Binding State, Converter={StaticResource StateToVisibility},
+                                     ConverterParameter=NotInstalled}"/>
+
+                <Button Content="Start" Margin="0,0,8,0"
+                        Style="{StaticResource PrimaryButton}"
+                        Padding="14,7"
+                        Command="{Binding StartCommand}"
+                        Visibility="{Binding State, Converter={StaticResource StateToVisibility},
+                                     ConverterParameter=Stopped}"/>
+
+                <Button Content="Stop" Margin="0,0,8,0"
+                        Style="{StaticResource DangerButton}"
+                        Padding="14,7"
+                        Command="{Binding StopCommand}"
+                        Visibility="{Binding State, Converter={StaticResource StateToVisibility},
+                                     ConverterParameter='Running,Starting'}"/>
+
+                <Button Content="Uninstall"
+                        Style="{StaticResource SecondaryButton}"
+                        Padding="14,7"
+                        Command="{Binding UninstallCommand}"
+                        Visibility="{Binding State, Converter={StaticResource StateToVisibility},
+                                     ConverterParameter='Stopped,NotInstalled'}"/>
+
+            </StackPanel>
+
+        </StackPanel>
+    </Border>
+</UserControl>
