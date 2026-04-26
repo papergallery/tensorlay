@@ -178,12 +178,26 @@ public partial class MainViewModel : ViewModelBase
             settings = _settingsService.Load(); // reload after pairing saved settings
         }
 
-        var runningPorts = Services
-            .Where(s => s.State == ServiceState.Running)
+        await _sshTunnelService.Connect(settings, GetCurrentlyTunnelablePorts);
+    }
+
+    /// <summary>
+    /// Returns ports for every installed service, regardless of whether it is
+    /// currently Running, Starting, Stopped, Stopping, or in Error.
+    /// Forwarding an unused port is harmless; failing to forward a port the
+    /// user is about to use is the bug. Only NotInstalled / Installing are
+    /// excluded since they have no usable backend yet.
+    /// This delegate is re-evaluated on every (re)connect attempt by
+    /// SshTunnelService so that services installed/started after the initial
+    /// connect get picked up.
+    /// </summary>
+    private IReadOnlyList<int> GetCurrentlyTunnelablePorts()
+    {
+        return Services
+            .Where(s => s.State != ServiceState.NotInstalled
+                     && s.State != ServiceState.Installing)
             .Select(s => s.Definition.Port)
             .ToList();
-
-        await _sshTunnelService.Connect(settings, runningPorts);
     }
 
     [RelayCommand(CanExecute = nameof(CanDisconnectTunnel))]

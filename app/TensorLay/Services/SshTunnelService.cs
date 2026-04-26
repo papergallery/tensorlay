@@ -16,7 +16,7 @@ public class SshTunnelService : IDisposable
     public event Action<bool>? ConnectionStatusChanged;
     public event Action<string>? TunnelLog;
 
-    public async Task Connect(AppSettings settings, List<int> ports)
+    public async Task Connect(AppSettings settings, Func<IReadOnlyList<int>> portsProvider)
     {
         await DisconnectInternal();
 
@@ -35,6 +35,9 @@ public class SshTunnelService : IDisposable
             TunnelLog?.Invoke($"Connecting to {settings.VpsUser}@{settings.VpsHost}:{settings.SshPort}...");
             await Task.Run(() => _client.Connect());
 
+            // Re-evaluate the port list at connect time so that services started
+            // after the initial connect get tunnelled on the next (re)connect.
+            var ports = portsProvider();
             foreach (int port in ports)
             {
                 var forwardedPort = new ForwardedPortRemote((uint)port, "127.0.0.1", (uint)port);
@@ -81,8 +84,10 @@ public class SshTunnelService : IDisposable
     /// <summary>
     /// Starts a background loop that monitors connection and reconnects on drop.
     /// Uses exponential backoff: 1s, 2s, 4s, ... up to 30s.
+    /// The portsProvider is re-evaluated on every reconnect attempt so that
+    /// services started after the initial connect are picked up.
     /// </summary>
-    public void AutoReconnectLoop(AppSettings settings, List<int> ports)
+    public void AutoReconnectLoop(AppSettings settings, Func<IReadOnlyList<int>> portsProvider)
     {
         _reconnectCts?.Cancel();
         _reconnectCts = new CancellationTokenSource();
@@ -101,7 +106,7 @@ public class SshTunnelService : IDisposable
                     TunnelLog?.Invoke($"Connection lost. Reconnecting in {delaySeconds}s...");
                     await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct).ConfigureAwait(false);
 
-                    await Connect(settings, ports).ConfigureAwait(false);
+                    await Connect(settings, portsProvider).ConfigureAwait(false);
 
                     if (IsConnected)
                         delaySeconds = 1;

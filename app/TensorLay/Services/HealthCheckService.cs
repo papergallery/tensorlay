@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http;
 
 namespace TensorLay.Services;
@@ -5,7 +6,7 @@ namespace TensorLay.Services;
 public class HealthCheckService : IDisposable
 {
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(3) };
-    private readonly Dictionary<string, string> _endpoints = new();
+    private readonly ConcurrentDictionary<string, string> _endpoints = new();
     private readonly Timer _timer;
     private bool _disposed;
 
@@ -23,13 +24,13 @@ public class HealthCheckService : IDisposable
 
     public void UnregisterService(string serviceId)
     {
-        _endpoints.Remove(serviceId);
+        _endpoints.TryRemove(serviceId, out _);
     }
 
     private void CheckAll()
     {
-        foreach (var (serviceId, url) in _endpoints)
-            _ = CheckHealthAsync(serviceId, url);
+        foreach (var kv in _endpoints.ToArray())
+            _ = CheckHealthAsync(kv.Key, kv.Value);
     }
 
     private async Task CheckHealthAsync(string serviceId, string url)

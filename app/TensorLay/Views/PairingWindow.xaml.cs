@@ -1,3 +1,4 @@
+using System.Threading;
 using System.Windows;
 using System.Windows.Media;
 using TensorLay.Services;
@@ -10,6 +11,7 @@ public partial class PairingWindow : Window
     private readonly SshKeyService _sshKeyService;
     private readonly SettingsService _settingsService;
     private bool _isPairing;
+    private CancellationTokenSource? _pairingCts;
 
     public PairingWindow(PairingService pairingService, SshKeyService sshKeyService, SettingsService settingsService)
     {
@@ -48,62 +50,81 @@ public partial class PairingWindow : Window
         }
 
         _isPairing = true;
+        _pairingCts?.Dispose();
+        _pairingCts = new CancellationTokenSource();
+        var ct = _pairingCts.Token;
+
         PairBtn.IsEnabled = false;
-        CancelBtn.IsEnabled = false;
+        // Keep CancelBtn enabled so the user can abort a hung request.
+        CancelBtn.IsEnabled = true;
         PairBtnText.Text = "Connecting...";
         SetStatus("Checking relay...", false);
 
-        var healthy = await _pairingService.CheckRelayHealthAsync(vpsIp);
-        if (!healthy)
-        {
-            SetStatus("Cannot reach relay on port 8090. Is it installed?", true);
-            ResetButtons();
-            return;
-        }
-
-        SetStatus("Generating SSH key...", false);
-        string publicKey;
-        string keyPath;
         try
         {
-            keyPath = _sshKeyService.GetOrCreateKeyPath();
-            publicKey = _sshKeyService.GetPublicKey();
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"Key error: {ex.Message}", true);
-            ResetButtons();
-            return;
-        }
+            var healthy = await _pairingService.CheckRelayHealthAsync(vpsIp, ct);
+            if (!healthy)
+            {
+                SetStatus("Cannot reach relay on port 8090. Is it installed?", true);
+                ResetButtons();
+                return;
+            }
 
-        SetStatus("Pairing...", false);
-        var result = await _pairingService.PairAsync(vpsIp, code, publicKey);
+            SetStatus("Generating SSH key...", false);
+            string publicKey;
+            string keyPath;
+            try
+            {
+                keyPath = _sshKeyService.GetOrCreateKeyPath();
+                publicKey = _sshKeyService.GetPublicKey();
+            }
+            catch (Exception ex)
+            {
+                SetStatus($"Key error: {ex.Message}", true);
+                ResetButtons();
+                return;
+            }
 
-        if (result.Success)
-        {
-            var settings = _settingsService.Load();
-            settings.VpsHost = vpsIp;
-            settings.VpsUser = result.SshUser;
-            settings.SshPort = result.SshPort;
-            settings.SshKeyPath = keyPath;
-            settings.IsPaired = true;
-            settings.AutoconnectTunnel = true;
-            _settingsService.Save(settings);
+            SetStatus("Pairing...", false);
+            var result = await _pairingService.PairAsync(vpsIp, code, publicKey, ct);
 
-            SetStatus("Paired successfully!", false);
-            DialogResult = true;
-            Close();
+            if (result.Success)
+            {
+                var settings = _settingsService.Load();
+                settings.VpsHost = vpsIp;
+                settings.VpsUser = result.SshUser;
+                settings.SshPort = result.SshPort;
+                settings.SshKeyPath = keyPath;
+                settings.IsPaired = true;
+                settings.AutoconnectTunnel = true;
+                _settingsService.Save(settings);
+
+                SetStatus("Paired successfully!", false);
+                DialogResult = true;
+                Close();
+            }
+            else
+            {
+                SetStatus(result.Error, true);
+                ResetButtons();
+            }
         }
-        else
+        catch (OperationCanceledException)
         {
-            SetStatus(result.Error, true);
+            // User cancelled in-flight pairing — reset state silently, no error popup.
+            SetStatus("Cancelled.", false);
             ResetButtons();
         }
     }
 
     private void OnCancelClicked(object sender, RoutedEventArgs e)
     {
-        if (_isPairing) return;
+        if (_isPairing)
+        {
+            // Abort in-flight pairing instead of ignoring the click.
+            _pairingCts?.Cancel();
+            return;
+        }
         DialogResult = false;
         Close();
     }

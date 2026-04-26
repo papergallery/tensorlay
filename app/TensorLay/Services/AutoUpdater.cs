@@ -93,11 +93,19 @@ public class AutoUpdater
 
             // PowerShell script with elevated privileges (needed for Program Files)
             var scriptPath = Path.Combine(Path.GetTempPath(), "tensorlay_update.ps1");
+
+            // Escape single quotes for PowerShell single-quoted string literals
+            // (e.g. user "O'Brien" → C:\Users\O'Brien\... would otherwise break the script)
+            static string Esc(string s) => s.Replace("'", "''");
+
             var script = $"""
                 Start-Sleep -Seconds 2
-                Move-Item -Path '{currentExe}' -Destination '{backupPath}' -Force -ErrorAction SilentlyContinue
-                Move-Item -Path '{tempPath}' -Destination '{currentExe}' -Force
-                Start-Process '{currentExe}'
+                $current = '{Esc(currentExe)}'
+                $backup  = '{Esc(backupPath)}'
+                $temp    = '{Esc(tempPath)}'
+                Move-Item -Path $current -Destination $backup -Force -ErrorAction SilentlyContinue
+                Move-Item -Path $temp -Destination $current -Force
+                Start-Process $current
                 Remove-Item -Path $MyInvocation.MyCommand.Path -Force
                 """;
             File.WriteAllText(scriptPath, script, Encoding.UTF8);
@@ -106,7 +114,7 @@ public class AutoUpdater
             Process.Start(new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-ExecutionPolicy Bypass -WindowStyle Hidden -File \"{scriptPath}\"",
+                Arguments = $"-ExecutionPolicy Bypass -WindowStyle Hidden -File \"{Esc(scriptPath)}\"",
                 UseShellExecute = true,
                 Verb = "runas",
                 WindowStyle = ProcessWindowStyle.Hidden

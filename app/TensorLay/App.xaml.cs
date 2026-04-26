@@ -89,9 +89,9 @@ public partial class App : Application
         try
         {
             var updater = new AutoUpdater();
-            _mainWindow.Title = $"TensorLay — checking updates (current: {updater.CurrentVersion})...";
+            _mainWindow.Title = $"TensorLay v{updater.CurrentVersion}";
+            updater.UpdateLog += msg => System.Diagnostics.Debug.WriteLine($"[updater] {msg}");
             var (available, newVersion, changelog) = await updater.CheckForUpdate();
-            _mainWindow.Title = $"TensorLay — v{updater.CurrentVersion}, remote: {newVersion ?? "none"}, available: {available}";
 
             if (available && newVersion != null)
             {
@@ -108,7 +108,7 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            _mainWindow.Title = $"TensorLay — update error: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine($"[updater] update error: {ex.Message}");
         }
     }
 

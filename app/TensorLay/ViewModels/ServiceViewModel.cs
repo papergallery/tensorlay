@@ -141,7 +141,9 @@ public partial class ServiceViewModel : ViewModelBase
         }
         catch
         {
-            State = ServiceState.Error;
+            // Install failed — revert to NotInstalled so the user can retry,
+            // rather than leaving a half-installed service in Stopped/Error state.
+            State = ServiceState.NotInstalled;
         }
 
         UpdateStatusText();

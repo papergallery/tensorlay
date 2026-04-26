@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using TensorLay.Models;
@@ -6,7 +7,7 @@ namespace TensorLay.Services;
 
 public class ProcessManager : IDisposable
 {
-    private readonly Dictionary<string, Process> _processes = new();
+    private readonly ConcurrentDictionary<string, Process> _processes = new();
     private bool _disposed;
 
     public event Action<string, string>? OutputReceived;
@@ -50,7 +51,7 @@ public class ProcessManager : IDisposable
             int code = 0;
             try { code = process.ExitCode; } catch { }
             ProcessExited?.Invoke(serviceId, code);
-            _processes.Remove(serviceId);
+            _processes.TryRemove(serviceId, out _);
         };
 
         process.Start();
@@ -75,7 +76,7 @@ public class ProcessManager : IDisposable
         }
         finally
         {
-            _processes.Remove(serviceId);
+            _processes.TryRemove(serviceId, out _);
         }
     }
 
@@ -89,7 +90,7 @@ public class ProcessManager : IDisposable
         if (_disposed) return;
         _disposed = true;
 
-        foreach (var (_, process) in _processes)
+        foreach (var (_, process) in _processes.ToArray())
         {
             try { process.Kill(entireProcessTree: true); } catch { }
             process.Dispose();
