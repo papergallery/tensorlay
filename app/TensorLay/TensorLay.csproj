@@ -10,7 +10,7 @@
     <AssemblyName>GpuHub</AssemblyName>
     <RootNamespace>TensorLay</RootNamespace>
     <ApplicationIcon>Resources\Icons\app.ico</ApplicationIcon>
-    <Version>0.7.8</Version>
+    <Version>0.7.9</Version>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>

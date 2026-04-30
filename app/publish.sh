@@ -8,7 +8,7 @@ VERSION="${1:-$(grep '<Version>' TensorLay/TensorLay.csproj | sed 's/.*<Version>
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PUBLISH_DIR="$PROJECT_DIR/publish"
 UPDATE_DIR="/var/www/html/gpuhub/updates"
-CERT_DIR="$PROJECT_DIR/certs"
+CERT_DIR="$PROJECT_DIR/../certs"
 DOTNET="$HOME/.dotnet/dotnet"
 
 echo "[+] Building TensorLay v${VERSION}..."
