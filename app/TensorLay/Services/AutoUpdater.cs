@@ -19,7 +19,7 @@ public class AutoUpdater
 
     public string CurrentVersion => Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
 
-    public async Task<(bool available, string? newVersion, string? changelog)> CheckForUpdate()
+    public async Task<(bool available, string? newVersion)> CheckForUpdate()
     {
         try
         {
@@ -28,7 +28,7 @@ public class AutoUpdater
             {
                 PropertyNameCaseInsensitive = true
             });
-            if (info == null) return (false, null, null);
+            if (info == null) return (false, null);
 
             var current = new Version(CurrentVersion);
             var remote = new Version(info.Version);
@@ -36,16 +36,16 @@ public class AutoUpdater
             if (remote > current)
             {
                 UpdateLog?.Invoke($"Update available: {CurrentVersion} -> {info.Version}");
-                return (true, info.Version, info.Changelog);
+                return (true, info.Version);
             }
 
             UpdateLog?.Invoke($"Up to date: {CurrentVersion}");
-            return (false, null, null);
+            return (false, null);
         }
         catch (Exception ex)
         {
             UpdateLog?.Invoke($"Update check failed: {ex.Message}");
-            return (false, null, null);
+            return (false, null);
         }
     }
 
@@ -134,7 +134,6 @@ public class AutoUpdater
     private class UpdateInfo
     {
         public string Version { get; set; } = "";
-        public string Changelog { get; set; } = "";
         public string Url { get; set; } = "";
     }
 }

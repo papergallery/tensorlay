@@ -10,14 +10,13 @@ public partial class UpdateWindow : Window
 
     public bool UserAccepted { get; private set; }
 
-    public UpdateWindow(AutoUpdater updater, string newVersion, string? changelog)
+    public UpdateWindow(AutoUpdater updater, string newVersion)
     {
         InitializeComponent();
 
         _updater = updater;
 
         VersionText.Text = $"v{updater.CurrentVersion}  \u2192  v{newVersion}";
-        ChangelogText.Text = changelog ?? "";
 
         _updater.DownloadProgress += OnProgress;
     }

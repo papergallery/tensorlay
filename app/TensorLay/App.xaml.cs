@@ -91,11 +91,11 @@ public partial class App : Application
             var updater = new AutoUpdater();
             _mainWindow.Title = $"TensorLay v{updater.CurrentVersion}";
             updater.UpdateLog += msg => System.Diagnostics.Debug.WriteLine($"[updater] {msg}");
-            var (available, newVersion, changelog) = await updater.CheckForUpdate();
+            var (available, newVersion) = await updater.CheckForUpdate();
 
             if (available && newVersion != null)
             {
-                var updateWindow = new UpdateWindow(updater, newVersion, changelog);
+                var updateWindow = new UpdateWindow(updater, newVersion);
                 updateWindow.Owner = _mainWindow;
                 updateWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
                 var accepted = updateWindow.ShowDialog() == true && updateWindow.UserAccepted;
