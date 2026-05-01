@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO;
 using System.Net.Http;
 using TensorLay.Models;
@@ -9,7 +10,7 @@ public class ModelDownloader : IDisposable
     private static readonly string[] ModelExtensions = { "*.safetensors", "*.ckpt", "*.gguf" };
 
     private readonly HttpClient _httpClient = new();
-    private readonly Dictionary<string, DownloadTask> _activeTasks = new();
+    private readonly ConcurrentDictionary<string, DownloadTask> _activeTasks = new();
     private readonly SettingsService _settingsService;
     private bool _disposed;
 
@@ -23,7 +24,16 @@ public class ModelDownloader : IDisposable
 
     public DownloadTask StartDownload(string url, string targetPath, string serviceId)
     {
-        var task = new DownloadTask
+        // Fast path: existing in-flight task for this URL — return it.
+        if (_activeTasks.TryGetValue(url, out var existing))
+            return existing;
+
+        // Build a candidate; if TryAdd loses the race, drop it and return
+        // whatever the winning thread put in. This is the atomic
+        // check-then-add idiom for ConcurrentDictionary — without TryAdd,
+        // two concurrent StartDownload calls for the same URL would both
+        // start RunDownload and race two writers to the same file.
+        var candidate = new DownloadTask
         {
             Url = url,
             TargetPath = targetPath,
@@ -32,9 +42,32 @@ public class ModelDownloader : IDisposable
             CancellationTokenSource = new CancellationTokenSource()
         };
 
-        _activeTasks[url] = task;
-        _ = RunDownload(task);
-        return task;
+        if (_activeTasks.TryAdd(url, candidate))
+        {
+            _ = RunDownload(candidate);
+            return candidate;
+        }
+
+        // Lost the race — dispose our orphan CTS so it doesn't leak,
+        // return the winner's task. If the winner already finished and
+        // removed itself between TryAdd and TryGetValue, fall through to
+        // a fresh start with the candidate (RunDownload still safe to
+        // call once).
+        candidate.CancellationTokenSource.Dispose();
+        if (_activeTasks.TryGetValue(url, out var winner))
+            return winner;
+
+        var fresh = new DownloadTask
+        {
+            Url = url,
+            TargetPath = targetPath,
+            ServiceId = serviceId,
+            State = DownloadState.Pending,
+            CancellationTokenSource = new CancellationTokenSource()
+        };
+        _activeTasks[url] = fresh;
+        _ = RunDownload(fresh);
+        return fresh;
     }
 
     public void CancelDownload(DownloadTask task)
@@ -89,7 +122,7 @@ public class ModelDownloader : IDisposable
         }
         finally
         {
-            _activeTasks.Remove(task.Url);
+            _activeTasks.TryRemove(task.Url, out _);
             DownloadCompleted?.Invoke(task);
         }
     }

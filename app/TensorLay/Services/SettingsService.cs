@@ -13,19 +13,42 @@ public class SettingsService
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
+    // Cache the raw JSON, not the parsed object — every Load() deserializes
+    // a fresh AppSettings so callers can safely mutate the returned object
+    // without leaking changes back into the cache. Disk read happens once
+    // per process (or after a Save). MainViewModel + each ServiceViewModel
+    // ctor + every Start/Install call hits Load — without this cache that's
+    // 10+ disk reads on a cold start.
+    private string? _cachedJson;
+    private readonly object _lock = new();
+
     public AppSettings Load()
     {
-        if (!File.Exists(SettingsPath))
-            return CreateDefault();
+        string json;
+        lock (_lock)
+        {
+            if (_cachedJson is null)
+            {
+                if (!File.Exists(SettingsPath))
+                {
+                    _cachedJson = "{}";
+                }
+                else
+                {
+                    try { _cachedJson = File.ReadAllText(SettingsPath); }
+                    catch { _cachedJson = "{}"; }
+                }
+            }
+            json = _cachedJson;
+        }
 
         try
         {
-            string json = File.ReadAllText(SettingsPath);
-            return JsonSerializer.Deserialize<AppSettings>(json) ?? CreateDefault();
+            return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
         }
         catch
         {
-            return CreateDefault();
+            return new AppSettings();
         }
     }
 
@@ -36,15 +59,17 @@ public class SettingsService
             Directory.CreateDirectory(dir);
 
         string json = JsonSerializer.Serialize(settings, JsonOptions);
-        File.WriteAllText(SettingsPath, json);
-    }
+        // Atomic replace: write to a sibling file then rename. Without this,
+        // a crash mid-write produces a truncated settings.json which the
+        // next Load() falls back to defaults — silently dropping VPS host,
+        // SSH key path, and pairing state.
+        string tmpPath = SettingsPath + ".tmp";
+        File.WriteAllText(tmpPath, json);
+        File.Move(tmpPath, SettingsPath, overwrite: true);
 
-    private static AppSettings CreateDefault()
-    {
-        var settings = new AppSettings();
-        string dir = Path.GetDirectoryName(SettingsPath)!;
-        if (!Directory.Exists(dir))
-            Directory.CreateDirectory(dir);
-        return settings;
+        lock (_lock)
+        {
+            _cachedJson = json;
+        }
     }
 }

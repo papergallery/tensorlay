@@ -1,6 +1,8 @@
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -31,8 +33,33 @@ public class AccountService
         if (!File.Exists(AuthPath)) return null;
         try
         {
-            string json = File.ReadAllText(AuthPath);
+            byte[] fileBytes = File.ReadAllBytes(AuthPath);
+            bool wasLegacyPlaintext = false;
+            string json;
+
+            try
+            {
+                // Current format: DPAPI-encrypted JSON. Tied to the user
+                // account on this machine — copying auth.json to another
+                // PC or even another Windows user yields a decrypt error.
+                byte[] decrypted = ProtectedData.Unprotect(
+                    fileBytes, null, DataProtectionScope.CurrentUser);
+                json = Encoding.UTF8.GetString(decrypted);
+            }
+            catch (CryptographicException)
+            {
+                // Legacy format from pre-0.8.0: raw plaintext JSON. Read
+                // it as-is and rewrite encrypted below so the next launch
+                // hits the encrypted path.
+                json = Encoding.UTF8.GetString(fileBytes);
+                wasLegacyPlaintext = true;
+            }
+
             Cached = JsonSerializer.Deserialize<AccountSession>(json, JsonOpts);
+
+            if (Cached != null && wasLegacyPlaintext)
+                Save(Cached);
+
             return Cached;
         }
         catch
@@ -84,7 +111,12 @@ public class AccountService
     {
         string dir = Path.GetDirectoryName(AuthPath)!;
         if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-        File.WriteAllText(AuthPath, JsonSerializer.Serialize(session, JsonOpts));
+
+        string json = JsonSerializer.Serialize(session, JsonOpts);
+        byte[] plaintext = Encoding.UTF8.GetBytes(json);
+        byte[] encrypted = ProtectedData.Protect(
+            plaintext, null, DataProtectionScope.CurrentUser);
+        File.WriteAllBytes(AuthPath, encrypted);
     }
 
     private class MeResponse

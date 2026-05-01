@@ -39,7 +39,9 @@ public class HealthCheckService : IDisposable
         try
         {
             var response = await _httpClient.GetAsync(url);
-            isHealthy = (int)response.StatusCode == 200;
+            // Any 2xx counts as healthy — some services return 204/202 from
+            // their readiness endpoint (e.g. AllTalk /api/ready).
+            isHealthy = response.IsSuccessStatusCode;
         }
         catch
         {

@@ -8,32 +8,75 @@ namespace TensorLay.Services;
 public class SshKeyService
 {
     private readonly string _keyDir;
-    private readonly string _privateKeyPath;
-    private readonly string _publicKeyPath;
+
+    // Two key formats — ed25519 (preferred, generated via Windows ssh-keygen)
+    // and RSA-4096 (fallback when ssh-keygen isn't on PATH). Each gets its
+    // own filename so the file extension matches its actual contents — the
+    // previous version wrote RSA bytes into a file called id_ed25519, which
+    // confused both humans and any tool inspecting %APPDATA%.
+    private readonly string _ed25519PrivatePath;
+    private readonly string _ed25519PublicPath;
+    private readonly string _rsaPrivatePath;
+    private readonly string _rsaPublicPath;
 
     public SshKeyService()
     {
         _keyDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "TensorLay");
-        _privateKeyPath = Path.Combine(_keyDir, "id_ed25519");
-        _publicKeyPath = Path.Combine(_keyDir, "id_ed25519.pub");
+        _ed25519PrivatePath = Path.Combine(_keyDir, "id_ed25519");
+        _ed25519PublicPath = Path.Combine(_keyDir, "id_ed25519.pub");
+        _rsaPrivatePath = Path.Combine(_keyDir, "id_rsa");
+        _rsaPublicPath = Path.Combine(_keyDir, "id_rsa.pub");
     }
 
+    /// <summary>
+    /// Synchronous version. Prefer <see cref="GetOrCreateKeyPathAsync"/>
+    /// from UI code — RSA-4096 generation can take 1-3 seconds on slow
+    /// hardware and freezes the WPF dispatcher.
+    /// </summary>
     public string GetOrCreateKeyPath()
     {
-        if (File.Exists(_privateKeyPath) && File.Exists(_publicKeyPath))
-            return _privateKeyPath;
+        // Existing keys (whichever format was generated last time)
+        if (File.Exists(_ed25519PrivatePath) && File.Exists(_ed25519PublicPath))
+            return _ed25519PrivatePath;
+        if (File.Exists(_rsaPrivatePath) && File.Exists(_rsaPublicPath))
+            return _rsaPrivatePath;
 
         Directory.CreateDirectory(_keyDir);
 
-        // Try ssh-keygen first (available on Windows 10+)
+        // ssh-keygen ships with Windows 10 1803+ and is the right tool for
+        // ed25519 (BCL has no equivalent that produces an OpenSSH-format key).
+        if (TryGenerateEd25519())
+            return _ed25519PrivatePath;
+
+        // Fallback: RSA-4096 via .NET (Renci.SshNet PrivateKeyFile reads PEM).
+        GenerateRsaKey();
+        return _rsaPrivatePath;
+    }
+
+    public Task<string> GetOrCreateKeyPathAsync() => Task.Run(GetOrCreateKeyPath);
+
+    public string GetPublicKey()
+    {
+        GetOrCreateKeyPath();
+        if (File.Exists(_ed25519PublicPath))
+            return File.ReadAllText(_ed25519PublicPath).Trim();
+        if (File.Exists(_rsaPublicPath))
+            return File.ReadAllText(_rsaPublicPath).Trim();
+        return "";
+    }
+
+    public Task<string> GetPublicKeyAsync() => Task.Run(GetPublicKey);
+
+    private bool TryGenerateEd25519()
+    {
         try
         {
             var psi = new ProcessStartInfo
             {
                 FileName = "ssh-keygen",
-                Arguments = $"-t ed25519 -f \"{_privateKeyPath}\" -N \"\" -q",
+                Arguments = $"-t ed25519 -f \"{_ed25519PrivatePath}\" -N \"\" -q",
                 CreateNoWindow = true,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
@@ -41,25 +84,14 @@ public class SshKeyService
             };
             using var proc = Process.Start(psi);
             proc?.WaitForExit(10000);
-            if (proc?.ExitCode == 0 && File.Exists(_privateKeyPath))
-                return _privateKeyPath;
+            return proc?.ExitCode == 0
+                && File.Exists(_ed25519PrivatePath)
+                && File.Exists(_ed25519PublicPath);
         }
         catch
         {
-            // ssh-keygen not available, fall back to RSA
+            return false;
         }
-
-        // Fallback: generate RSA key via .NET (SSH.NET can read PEM)
-        GenerateRsaKey();
-        return _privateKeyPath;
-    }
-
-    public string GetPublicKey()
-    {
-        GetOrCreateKeyPath();
-        return File.Exists(_publicKeyPath)
-            ? File.ReadAllText(_publicKeyPath).Trim()
-            : "";
     }
 
     private void GenerateRsaKey()
@@ -71,12 +103,12 @@ public class SshKeyService
         var privatePem = "-----BEGIN RSA PRIVATE KEY-----\n"
             + Convert.ToBase64String(privateKey, Base64FormattingOptions.InsertLineBreaks)
             + "\n-----END RSA PRIVATE KEY-----\n";
-        File.WriteAllText(_privateKeyPath, privatePem);
+        File.WriteAllText(_rsaPrivatePath, privatePem);
 
         // Write public key in OpenSSH RFC 4253 SSH wire format
         // (length-prefixed "ssh-rsa", exponent, modulus — all big-endian).
         var sshPub = BuildSshRsaPublicKey(rsa);
-        File.WriteAllText(_publicKeyPath, sshPub);
+        File.WriteAllText(_rsaPublicPath, sshPub);
     }
 
     private static string BuildSshRsaPublicKey(RSA rsa)

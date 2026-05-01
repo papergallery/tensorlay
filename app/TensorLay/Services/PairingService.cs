@@ -9,13 +9,28 @@ public class PairingResult
     public bool Success { get; set; }
     public string SshUser { get; set; } = "";
     public int SshPort { get; set; } = 22;
+    public string ServiceToken { get; set; } = "";
+    public List<string> HostKeyFingerprints { get; set; } = new();
     public string Error { get; set; } = "";
 }
 
 public class PairingService
 {
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
-    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+
+    // SnakeCaseLower handles both directions: the request body's
+    // PascalCase anonymous-type fields serialize to snake_case JSON
+    // (matching FastAPI's pydantic model field names), and incoming
+    // snake_case JSON deserializes back into PascalCase PairingResult
+    // properties. Without this, the previous version silently dropped
+    // ssh_user / ssh_port from the response (relay returned them but
+    // they never made it into PairingResult — the SSH user came back
+    // as an empty string and SSH connect would fail).
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        PropertyNameCaseInsensitive = true,
+    };
 
     public async Task<bool> CheckRelayHealthAsync(string vpsHost, CancellationToken cancellationToken = default)
     {
@@ -38,11 +53,13 @@ public class PairingService
     {
         try
         {
+            // Anonymous-type field names in PascalCase — JsonOpts converts to
+            // snake_case on the wire (Code → "code", SshPublicKey → "ssh_public_key").
             var body = JsonSerializer.Serialize(new
             {
-                code = pairingCode.Trim().ToUpper(),
-                ssh_public_key = sshPublicKey.Trim()
-            });
+                Code = pairingCode.Trim().ToUpper(),
+                SshPublicKey = sshPublicKey.Trim(),
+            }, JsonOpts);
 
             var content = new StringContent(body, Encoding.UTF8, "application/json");
             var resp = await _httpClient.PostAsync($"http://{vpsHost}:8090/pair", content, cancellationToken);

@@ -75,8 +75,9 @@ public partial class PairingWindow : Window
             string keyPath;
             try
             {
-                keyPath = _sshKeyService.GetOrCreateKeyPath();
-                publicKey = _sshKeyService.GetPublicKey();
+                // RSA-4096 fallback can take seconds — keep it off the UI thread.
+                keyPath = await _sshKeyService.GetOrCreateKeyPathAsync();
+                publicKey = await _sshKeyService.GetPublicKeyAsync();
             }
             catch (Exception ex)
             {
@@ -97,6 +98,9 @@ public partial class PairingWindow : Window
                 settings.SshKeyPath = keyPath;
                 settings.IsPaired = true;
                 settings.AutoconnectTunnel = true;
+                // Pin the VPS's SSH host keys so any future Connect that
+                // negotiates a different key (= different server) is rejected.
+                settings.SshHostKeyFingerprints = result.HostKeyFingerprints ?? new List<string>();
                 _settingsService.Save(settings);
 
                 SetStatus("Paired successfully!", false);

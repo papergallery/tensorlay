@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using TensorLay.Models;
 
 namespace TensorLay.Services;
@@ -6,6 +7,9 @@ namespace TensorLay.Services;
 public class GpuMonitor : IDisposable
 {
     private readonly Timer _timer;
+    // Guards against overlapping polls if a previous nvidia-smi call is
+    // still running when the next tick fires.
+    private int _polling;
     private bool _disposed;
 
     public GpuInfo? CurrentInfo { get; private set; }
@@ -14,10 +18,28 @@ public class GpuMonitor : IDisposable
 
     public GpuMonitor()
     {
-        _timer = new Timer(_ => Poll(), null, TimeSpan.Zero, TimeSpan.FromSeconds(3));
+        _timer = new Timer(
+            _ =>
+            {
+                if (Interlocked.CompareExchange(ref _polling, 1, 0) != 0) return;
+                _ = PollWithFlagAsync();
+            },
+            null,
+            TimeSpan.Zero,
+            TimeSpan.FromSeconds(3));
     }
 
-    private void Poll()
+    // try/finally guarantees _polling is reset even when PollAsync throws
+    // synchronously before its first await (e.g. ProcessStartInfo construction
+    // fails). The previous ContinueWith(...) version had a small window where
+    // a synchronous fault could escape and leave _polling stuck at 1.
+    private async Task PollWithFlagAsync()
+    {
+        try { await PollAsync().ConfigureAwait(false); }
+        finally { Volatile.Write(ref _polling, 0); }
+    }
+
+    private async Task PollAsync()
     {
         try
         {
@@ -34,13 +56,27 @@ public class GpuMonitor : IDisposable
             using var process = Process.Start(psi);
             if (process is null) return;
 
-            string output = process.StandardOutput.ReadToEnd().Trim();
-            process.WaitForExit(3000);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            string output;
+            try
+            {
+                // ReadToEndAsync + WaitForExitAsync both honour the token, so
+                // a hung nvidia-smi can't pile up timer threads — we kill it
+                // and move on to the next tick.
+                var readTask = process.StandardOutput.ReadToEndAsync(cts.Token);
+                var exitTask = process.WaitForExitAsync(cts.Token);
+                await Task.WhenAll(readTask, exitTask).ConfigureAwait(false);
+                output = (await readTask).Trim();
+            }
+            catch (OperationCanceledException)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return;
+            }
 
             var info = Parse(output);
             if (info is not null)
             {
-                // Get system RAM
                 GetSystemRam(info);
                 CurrentInfo = info;
                 GpuInfoUpdated?.Invoke(info);
@@ -71,36 +107,45 @@ public class GpuMonitor : IDisposable
         };
     }
 
+    // wmic.exe is deprecated and removed by default on fresh Windows 11 24H2
+    // installs. GlobalMemoryStatusEx is in kernel32 and has been there since
+    // Windows 2000 — never going away.
     private static void GetSystemRam(GpuInfo info)
     {
         try
         {
-            var psi = new ProcessStartInfo
+            var status = new MEMORYSTATUSEX();
+            if (GlobalMemoryStatusEx(status))
             {
-                FileName = "wmic",
-                Arguments = "OS get FreePhysicalMemory,TotalVisibleMemorySize /value",
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return;
-            string output = proc.StandardOutput.ReadToEnd();
-            proc.WaitForExit(2000);
-
-            foreach (var line in output.Split('\n'))
-            {
-                var trimmed = line.Trim();
-                if (trimmed.StartsWith("TotalVisibleMemorySize=") &&
-                    long.TryParse(trimmed.Split('=')[1].Trim(), out long totalKb))
-                    info.RamTotalMb = (int)(totalKb / 1024);
-                if (trimmed.StartsWith("FreePhysicalMemory=") &&
-                    long.TryParse(trimmed.Split('=')[1].Trim(), out long freeKb))
-                    info.RamUsedMb = info.RamTotalMb - (int)(freeKb / 1024);
+                info.RamTotalMb = (int)(status.ullTotalPhys / (1024UL * 1024UL));
+                info.RamUsedMb = (int)((status.ullTotalPhys - status.ullAvailPhys) / (1024UL * 1024UL));
             }
         }
-        catch { }
+        catch { /* best-effort: leave RAM fields at 0 if the API call fails */ }
     }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    private sealed class MEMORYSTATUSEX
+    {
+        public uint dwLength;
+        public uint dwMemoryLoad;
+        public ulong ullTotalPhys;
+        public ulong ullAvailPhys;
+        public ulong ullTotalPageFile;
+        public ulong ullAvailPageFile;
+        public ulong ullTotalVirtual;
+        public ulong ullAvailVirtual;
+        public ulong ullAvailExtendedVirtual;
+
+        public MEMORYSTATUSEX()
+        {
+            dwLength = (uint)Marshal.SizeOf<MEMORYSTATUSEX>();
+        }
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GlobalMemoryStatusEx([In, Out] MEMORYSTATUSEX lpBuffer);
 
     public void Dispose()
     {

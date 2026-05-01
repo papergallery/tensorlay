@@ -2,6 +2,11 @@
 CLAUDE.md
 **/CLAUDE.md
 .claude/
+TODO.md
+
+# Python bytecode (relay)
+__pycache__/
+*.pyc
 
 # .NET build output
 bin/

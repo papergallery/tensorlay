@@ -57,11 +57,15 @@ cp "$PUBLISH_DIR/GpuHub.exe" "$UPDATE_DIR/GpuHub.exe"
 cp "$PROJECT_DIR/TensorLay-Setup.exe" "$UPDATE_DIR/TensorLay-Setup.exe"
 cp "$CERT_DIR/gpuhub_cert.pem" "$UPDATE_DIR/gpuhub_cert.cer"
 
+# Compute SHA256 over the SIGNED exe so the client can verify integrity.
+EXE_SHA256=$(sha256sum "$UPDATE_DIR/GpuHub.exe" | awk '{print $1}')
+
 cat > "$UPDATE_DIR/version.json" << EOF
 {
     "version": "${VERSION}",
     "changelog": "Update to v${VERSION}",
-    "url": "https://tensorlay.com/updates/GpuHub.exe"
+    "url": "https://tensorlay.com/updates/GpuHub.exe",
+    "sha256": "${EXE_SHA256}"
 }
 EOF
 
@@ -69,4 +73,5 @@ echo ""
 echo "[+] Published v${VERSION}"
 echo "    Exe:       $(du -h "$UPDATE_DIR/GpuHub.exe" | cut -f1)"
 echo "    Installer: $(du -h "$UPDATE_DIR/TensorLay-Setup.exe" | cut -f1)"
+echo "    SHA256:    ${EXE_SHA256}"
 echo "    Download:  https://tensorlay.com/download"

@@ -15,7 +15,7 @@ public class ProcessManager : IDisposable
 
     public void StartService(ServiceDefinition service, string installDir)
     {
-        if (_processes.TryGetValue(service.Id, out var existing) && !existing.HasExited)
+        if (_processes.TryGetValue(service.Id, out var existing) && IsAlive(existing))
             return;
 
         string workingDir = string.IsNullOrEmpty(service.RelativeInstallPath)
@@ -51,7 +51,16 @@ public class ProcessManager : IDisposable
             int code = 0;
             try { code = process.ExitCode; } catch { }
             ProcessExited?.Invoke(serviceId, code);
-            _processes.TryRemove(serviceId, out _);
+            // Value-equality TryRemove: a fresh StartService for the same
+            // serviceId may have already replaced this entry with a new
+            // Process object. Without value-check we'd yank the new entry
+            // out of the dict and orphan a running process — IsRunning then
+            // returns false, the user clicks Start again, another instance
+            // launches, and so on.
+            _processes.TryRemove(new KeyValuePair<string, Process>(serviceId, process));
+            // Release process handles — dispose only happens after Exited
+            // because reading ExitCode requires the underlying handle.
+            try { process.Dispose(); } catch { }
         };
 
         process.Start();
@@ -68,7 +77,8 @@ public class ProcessManager : IDisposable
         try
         {
             process.Kill(entireProcessTree: true);
-            await process.WaitForExitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await process.WaitForExitAsync(cts.Token);
         }
         catch
         {
@@ -82,7 +92,15 @@ public class ProcessManager : IDisposable
 
     public bool IsRunning(string serviceId)
     {
-        return _processes.TryGetValue(serviceId, out var process) && !process.HasExited;
+        return _processes.TryGetValue(serviceId, out var process) && IsAlive(process);
+    }
+
+    // HasExited throws InvalidOperationException if the Process was already
+    // disposed (e.g. by the Exited handler racing with this check).
+    private static bool IsAlive(Process p)
+    {
+        try { return !p.HasExited; }
+        catch { return false; }
     }
 
     public void Dispose()

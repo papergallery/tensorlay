@@ -27,6 +27,32 @@ public partial class App : Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        // OnStartup is async void — without this top-level catch, any
+        // exception between Show() and the update block crashes the app
+        // with no diagnostic. Keep the body wrapped so we can at least
+        // surface the error before exiting.
+        try
+        {
+            await StartupAsync(e);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[startup] fatal: {ex}");
+            try
+            {
+                MessageBox.Show(
+                    $"TensorLay failed to start:\n\n{ex.Message}",
+                    "TensorLay",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            catch { /* dispatcher may already be down */ }
+            Shutdown(1);
+        }
+    }
+
+    private async Task StartupAsync(StartupEventArgs e)
+    {
         // One-time migration of legacy %APPDATA%\GpuHub → %APPDATA%\TensorLay
         // (pre-rename installs stored settings under the old name).
         MigrateLegacyAppData();
@@ -41,6 +67,13 @@ public partial class App : Application
             return;
         }
 
+        // Start the URL pipe server BEFORE any heavy init — the second
+        // instance only retries pipe.Connect for 2 seconds, and our
+        // MainWindow.Show() can easily take longer than that on cold
+        // start. Running it before init guarantees forwards aren't lost.
+        _pipeCts = new CancellationTokenSource();
+        _ = Task.Run(() => RunUrlPipeServerAsync(_pipeCts.Token));
+
         base.OnStartup(e);
 
         var settingsService = new SettingsService();
@@ -49,7 +82,7 @@ public partial class App : Application
         _gpuMonitor = new GpuMonitor();
         _processManager = new ProcessManager();
         _healthCheckService = new HealthCheckService();
-        _sshTunnelService = new SshTunnelService();
+        _sshTunnelService = new SshTunnelService(settingsService);
         _installerService = new InstallerService();
         _modelDownloader = new ModelDownloader(settingsService);
 
@@ -69,17 +102,27 @@ public partial class App : Application
 
         mainVm.Initialize();
 
+        // Build the updater up-front so we can stamp the Title BEFORE Show()
+        // — otherwise the user sees "TensorLay" briefly before it flashes to
+        // "TensorLay v0.7.9" once the update check kicks in.
+        using var updater = new AutoUpdater();
+
+        // Show main window
+        _mainWindow = new MainWindow
+        {
+            DataContext = mainVm,
+            Title = $"TensorLay v{updater.CurrentVersion}",
+        };
+        _mainWindow.Show();
+
+        // Trigger autoconnect AFTER MainWindow.Show — in the corrupted-
+        // settings edge case (AutoconnectTunnel=true but IsPaired=false)
+        // ConnectTunnel() opens a PairingWindow whose Owner is set from
+        // Application.Current.MainWindow. Doing this before Show() leaves
+        // that owner null and the dialog ends up unparented.
         var settings = settingsService.Load();
         if (settings.AutoconnectTunnel)
             _ = mainVm.ConnectTunnelCommand.ExecuteAsync(null);
-
-        // Show main window
-        _mainWindow = new MainWindow { DataContext = mainVm };
-        _mainWindow.Show();
-
-        // Start URL pipe server for forwarded sign-in URLs
-        _pipeCts = new CancellationTokenSource();
-        _ = Task.Run(() => RunUrlPipeServerAsync(_pipeCts.Token));
 
         // Process the URL the OS launched us with, if any
         string? initialUrl = FindUrlArg(e.Args);
@@ -88,8 +131,6 @@ public partial class App : Application
         // Check for updates
         try
         {
-            var updater = new AutoUpdater();
-            _mainWindow.Title = $"TensorLay v{updater.CurrentVersion}";
             updater.UpdateLog += msg => System.Diagnostics.Debug.WriteLine($"[updater] {msg}");
             var (available, newVersion) = await updater.CheckForUpdate();
 
@@ -227,6 +268,11 @@ public partial class App : Application
         }
     }
 
+    // REMOVE in v0.10+: one-shot rename of %APPDATA%\GpuHub → %APPDATA%\TensorLay
+    // for users updating from v0.7.x. After two or three releases past 0.8.0
+    // the install base will have all migrated and this code is dead weight.
+    // The early-return on Directory.Exists(newDir) makes it free on every
+    // launch after the first, so leaving it for now is harmless.
     private static void MigrateLegacyAppData()
     {
         string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);

@@ -141,8 +141,18 @@ public partial class ServiceViewModel : ViewModelBase
         }
         catch
         {
-            // Install failed — revert to NotInstalled so the user can retry,
-            // rather than leaving a half-installed service in Stopped/Error state.
+            // Install failed — InstallerService already logged the error via
+            // InstallLog. Try to clean up the partial directory so a subsequent
+            // IsInstalled() check doesn't see a broken half-installed service
+            // and re-mark it as Stopped on the next launch. Best-effort: if
+            // cleanup itself fails (locked files / permissions), we still revert
+            // the in-memory state so the user can hit Install again.
+            try
+            {
+                var settings = _settingsService.Load();
+                await _installerService.Uninstall(Definition, settings.InstallDirectory);
+            }
+            catch { /* best-effort cleanup */ }
             State = ServiceState.NotInstalled;
         }
 
@@ -178,8 +188,13 @@ public partial class ServiceViewModel : ViewModelBase
     private bool CanStart() => State == ServiceState.Stopped;
     private bool CanStop() => State == ServiceState.Running || State == ServiceState.Starting;
 
+    // ProcessManager.StartService is fire-and-forget — the process either
+    // lives (HealthCheckService picks it up) or dies (ProcessManager.Exited
+    // fires). Returning Task.CompletedTask keeps the source generator
+    // emitting IAsyncRelayCommand (so MainViewModel.StartAll can still call
+    // ExecuteAsync) without the no-op `await Task.CompletedTask` dance.
     [RelayCommand(CanExecute = nameof(CanStart))]
-    private async Task Start()
+    private Task Start()
     {
         State = ServiceState.Starting;
         UpdateStatusText();
@@ -203,7 +218,7 @@ public partial class ServiceViewModel : ViewModelBase
             StopCommand.NotifyCanExecuteChanged();
         }
 
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 
     [RelayCommand(CanExecute = nameof(CanStop))]
@@ -231,20 +246,33 @@ public partial class ServiceViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task DownloadModel()
+    private Task DownloadModel()
     {
-        if (string.IsNullOrWhiteSpace(NewModelUrl)) return;
+        if (string.IsNullOrWhiteSpace(NewModelUrl)) return Task.CompletedTask;
+
+        // Reject anything that's not a well-formed http(s) URL — without
+        // this, "foo bar" or a missing scheme blows up new Uri() and crashes
+        // the click handler.
+        if (!Uri.TryCreate(NewModelUrl, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            return Task.CompletedTask;
+        }
+
+        string fileName = Path.GetFileName(uri.AbsolutePath);
+        // Trailing slash → empty file name → can't write to a directory path.
+        if (string.IsNullOrEmpty(fileName)) return Task.CompletedTask;
 
         var settings = _settingsService.Load();
         var targetPath = Path.Combine(
             settings.InstallDirectory,
             Definition.RelativeInstallPath,
             Definition.ModelsSubfolder,
-            Path.GetFileName(new Uri(NewModelUrl).AbsolutePath));
+            fileName);
 
         var task = _modelDownloader.StartDownload(NewModelUrl, targetPath, Definition.Id);
         ActiveDownload = task;
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 
     [RelayCommand]
