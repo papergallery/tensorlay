@@ -129,7 +129,16 @@ public class InstallerService : IDisposable
 
     public async Task Uninstall(ServiceDefinition service, string installDir)
     {
-        if (service.UseSystemInstaller) return;
+        if (service.UseSystemInstaller)
+        {
+            // Ollama (the only system-installer service today) is installed via
+            // its own MSI/setup into Program Files — we have no clean way to
+            // call its uninstaller, and silently doing nothing while the UI
+            // says "Uninstalled" leaves the user confused on next launch.
+            throw new NotSupportedException(
+                $"{service.DisplayName} was installed by its own setup. " +
+                "Remove it via Windows Settings → Apps & Features.");
+        }
 
         string targetPath = string.IsNullOrEmpty(service.RelativeInstallPath)
             ? installDir
@@ -138,9 +147,30 @@ public class InstallerService : IDisposable
         if (Directory.Exists(targetPath))
         {
             InstallLog?.Invoke(service.Id, $"Removing {targetPath}...");
-            await Task.Run(() => Directory.Delete(targetPath, recursive: true));
+            await Task.Run(() => ForceDeleteDirectory(targetPath));
             InstallLog?.Invoke(service.Id, "Uninstalled.");
         }
+    }
+
+    // git on Windows marks pack files (.git/objects/pack/*.idx etc.) as
+    // read-only, which makes Directory.Delete throw UnauthorizedAccessException
+    // halfway through. Walk the tree and clear the attribute first.
+    private static void ForceDeleteDirectory(string path)
+    {
+        if (!Directory.Exists(path)) return;
+
+        foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+        {
+            try
+            {
+                var attrs = File.GetAttributes(file);
+                if ((attrs & FileAttributes.ReadOnly) != 0)
+                    File.SetAttributes(file, attrs & ~FileAttributes.ReadOnly);
+            }
+            catch { /* best-effort — Delete will report the real error if it fails */ }
+        }
+
+        Directory.Delete(path, recursive: true);
     }
 
     public bool IsInstalled(ServiceDefinition service, string installDir)

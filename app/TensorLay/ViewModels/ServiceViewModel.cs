@@ -183,6 +183,7 @@ public partial class ServiceViewModel : ViewModelBase
     [RelayCommand]
     private async Task Uninstall()
     {
+        Exception? failure = null;
         try
         {
             if (State == ServiceState.Running)
@@ -193,14 +194,29 @@ public partial class ServiceViewModel : ViewModelBase
             State = ServiceState.NotInstalled;
             Models.Clear();
         }
-        catch
+        catch (Exception ex)
         {
-            State = ServiceState.Error;
+            failure = ex;
+            // Don't flip to Error — the install on disk is still whatever it
+            // was. Re-check actual state so the UI reflects reality.
+            var settings = _settingsService.Load();
+            bool stillInstalled = _installerService.IsInstalled(Definition, settings.InstallDirectory);
+            State = stillInstalled ? ServiceState.Stopped : ServiceState.NotInstalled;
         }
 
         UpdateStatusText();
         StartCommand.NotifyCanExecuteChanged();
         StopCommand.NotifyCanExecuteChanged();
+
+        if (failure is not null)
+        {
+            RunOnUI(() => MessageBox.Show(
+                System.Windows.Application.Current?.MainWindow,
+                failure.Message,
+                $"{Definition.DisplayName} uninstall failed",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning));
+        }
     }
 
     private bool CanStart() => State == ServiceState.Stopped;
