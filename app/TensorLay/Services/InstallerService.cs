@@ -49,14 +49,24 @@ public class InstallerService : IDisposable
 
             InstallProgress?.Invoke(service.Id, 0.6);
 
-            string requirementsPath = Path.Combine(targetPath, "requirements.txt");
-            if (File.Exists(requirementsPath))
+            // SD Forge ships only `requirements_versions.txt`; other forks may
+            // use either name. Fall back so we don't silently skip the pip step.
+            string? requirementsFile = null;
+            foreach (var candidate in new[] { "requirements.txt", "requirements_versions.txt" })
+            {
+                if (File.Exists(Path.Combine(targetPath, candidate)))
+                {
+                    requirementsFile = candidate;
+                    break;
+                }
+            }
+            if (requirementsFile is not null)
             {
                 EnsureOnPath("python", "Python 3", "https://www.python.org/downloads/windows/");
-                InstallLog?.Invoke(service.Id, "Installing pip requirements...");
+                InstallLog?.Invoke(service.Id, $"Installing pip requirements ({requirementsFile})...");
                 // `python -m pip` works even when pip.exe is not on PATH (common
                 // on Microsoft Store Python installs).
-                await RunProcess("python", "-m pip install -r requirements.txt", targetPath, service.Id);
+                await RunProcess("python", $"-m pip install -r {requirementsFile}", targetPath, service.Id);
             }
 
             InstallProgress?.Invoke(service.Id, 1.0);

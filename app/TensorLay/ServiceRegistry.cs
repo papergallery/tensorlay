@@ -16,8 +16,11 @@ public static class ServiceRegistry
             HealthEndpoint = "/sdapi/v1/sd-models",
             GitRepoUrl = "https://github.com/lllyasviel/stable-diffusion-webui-forge.git",
             RelativeInstallPath = "sd-forge",
-            StartExecutable = "python",
-            StartArguments = "launch.py --api --listen --port 7860 --skip-torch-cuda-test --no-download-sd-model",
+            // Forge pins torch==2.3.1, which has no wheels for Python 3.13+.
+            // Use the Windows Python Launcher (`py.exe`) to force 3.10 even
+            // when a newer Python is the system default.
+            StartExecutable = "py",
+            StartArguments = "-3.10 launch.py --api --listen --port 7860 --skip-torch-cuda-test --no-download-sd-model",
             ModelsSubfolder = "models/Stable-diffusion",
             UseSystemInstaller = false
         },
