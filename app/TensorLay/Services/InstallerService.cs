@@ -67,6 +67,26 @@ public class InstallerService : IDisposable
                 // launcher so pip installs into the same Python that runs
                 // the service.
                 EnsureOnPath(service.PythonExecutable, "Python 3", "https://www.python.org/downloads/windows/");
+
+                // The new Windows Python Launcher (bundled with Python 3.13+)
+                // can fetch missing runtimes on demand via `py install 3.10`.
+                // Idempotent on the new launcher; will fail loudly on older
+                // launchers — we swallow that and let the actual pip step
+                // produce the real error if the runtime is still missing.
+                if (service.PythonExecutable == "py" && service.PythonInterpreterArgs.StartsWith("-3."))
+                {
+                    string version = service.PythonInterpreterArgs.Split(' ')[0].TrimStart('-');
+                    InstallLog?.Invoke(service.Id, $"Ensuring Python {version} runtime is installed (one-time, ~30 MB)...");
+                    try
+                    {
+                        await RunProcess("py", $"install {version}", targetPath, service.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        InstallLog?.Invoke(service.Id, $"py install warning (continuing): {ex.Message}");
+                    }
+                }
+
                 InstallLog?.Invoke(service.Id, $"Installing pip requirements ({requirementsFile})...");
                 string pipArgs = string.IsNullOrEmpty(service.PythonInterpreterArgs)
                     ? $"-m pip install -r {requirementsFile}"

@@ -15,7 +15,7 @@ Unicode True
 SetCompressor /SOLID lzma
 
 ; ─── Version ───
-!define VERSION "0.8.4"
+!define VERSION "0.8.5"
 VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName" "TensorLay"
 VIAddVersionKey "ProductVersion" "${VERSION}"
