@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using TensorLay.Models;
@@ -54,6 +55,7 @@ public partial class ServiceViewModel : ViewModelBase
         _processManager.ProcessExited += OnProcessExited;
         _modelDownloader.DownloadProgressChanged += OnDownloadProgress;
         _modelDownloader.DownloadCompleted += OnDownloadCompleted;
+        _installerService.InstallProgress += OnInstallProgress;
 
         var settings = _settingsService.Load();
         bool installed = _installerService.IsInstalled(definition, settings.InstallDirectory);
@@ -112,6 +114,12 @@ public partial class ServiceViewModel : ViewModelBase
         });
     }
 
+    private void OnInstallProgress(string serviceId, double fraction)
+    {
+        if (serviceId != Definition.Id) return;
+        RunOnUI(() => InstallProgress = fraction * 100.0);
+    }
+
     private void UpdateStatusText()
     {
         StatusText = State switch
@@ -133,20 +141,20 @@ public partial class ServiceViewModel : ViewModelBase
         State = ServiceState.Installing;
         UpdateStatusText();
 
+        Exception? failure = null;
         try
         {
             var settings = _settingsService.Load();
             await _installerService.Install(Definition, settings.InstallDirectory);
             State = ServiceState.Stopped;
         }
-        catch
+        catch (Exception ex)
         {
-            // Install failed — InstallerService already logged the error via
-            // InstallLog. Try to clean up the partial directory so a subsequent
-            // IsInstalled() check doesn't see a broken half-installed service
-            // and re-mark it as Stopped on the next launch. Best-effort: if
-            // cleanup itself fails (locked files / permissions), we still revert
-            // the in-memory state so the user can hit Install again.
+            failure = ex;
+            // Best-effort cleanup of a partial install so a subsequent
+            // IsInstalled() check doesn't see half-cloned files and report
+            // Stopped on next launch. Errors here are swallowed — we still
+            // revert in-memory state so the user can retry.
             try
             {
                 var settings = _settingsService.Load();
@@ -160,6 +168,16 @@ public partial class ServiceViewModel : ViewModelBase
         InstallProgress = 0;
         StartCommand.NotifyCanExecuteChanged();
         StopCommand.NotifyCanExecuteChanged();
+
+        if (failure is not null)
+        {
+            RunOnUI(() => MessageBox.Show(
+                System.Windows.Application.Current?.MainWindow,
+                failure.Message,
+                $"{Definition.DisplayName} install failed",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error));
+        }
     }
 
     [RelayCommand]

@@ -38,6 +38,10 @@ public class InstallerService : IDisposable
                 ? installDir
                 : Path.Combine(installDir, service.RelativeInstallPath);
 
+            EnsureOnPath("git", "Git", "https://git-scm.com/download/win");
+
+            Directory.CreateDirectory(installDir);
+
             InstallLog?.Invoke(service.Id, $"Cloning {service.GitRepoUrl}...");
             InstallProgress?.Invoke(service.Id, 0.1);
 
@@ -48,8 +52,11 @@ public class InstallerService : IDisposable
             string requirementsPath = Path.Combine(targetPath, "requirements.txt");
             if (File.Exists(requirementsPath))
             {
+                EnsureOnPath("python", "Python 3", "https://www.python.org/downloads/windows/");
                 InstallLog?.Invoke(service.Id, "Installing pip requirements...");
-                await RunProcess("pip", "install -r requirements.txt", targetPath, service.Id);
+                // `python -m pip` works even when pip.exe is not on PATH (common
+                // on Microsoft Store Python installs).
+                await RunProcess("python", "-m pip install -r requirements.txt", targetPath, service.Id);
             }
 
             InstallProgress?.Invoke(service.Id, 1.0);
@@ -67,11 +74,36 @@ public class InstallerService : IDisposable
         string tempPath = Path.Combine(Path.GetTempPath(), "OllamaSetup.exe");
 
         InstallLog?.Invoke(serviceId, "Downloading OllamaSetup.exe...");
-        InstallProgress?.Invoke(serviceId, 0.1);
+        InstallProgress?.Invoke(serviceId, 0.0);
 
-        using var httpClient = new HttpClient();
-        var bytes = await httpClient.GetByteArrayAsync(OllamaInstallerUrl);
-        await File.WriteAllBytesAsync(tempPath, bytes);
+        // Default HttpClient.Timeout (100s) cannot finish ~700 MB on a typical
+        // residential link — must be raised. Stream into a FileStream instead
+        // of GetByteArrayAsync so the whole installer doesn't sit in RAM and so
+        // we can report progress.
+        using var httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
+        using (var response = await httpClient.GetAsync(OllamaInstallerUrl, HttpCompletionOption.ResponseHeadersRead))
+        {
+            response.EnsureSuccessStatusCode();
+            long? total = response.Content.Headers.ContentLength;
+            await using var src = await response.Content.ReadAsStreamAsync();
+            await using var dst = File.Create(tempPath);
+
+            var buffer = new byte[81920];
+            long copied = 0;
+            int read;
+            int reportTick = 0;
+            while ((read = await src.ReadAsync(buffer)) > 0)
+            {
+                await dst.WriteAsync(buffer.AsMemory(0, read));
+                copied += read;
+                // 0.0..0.45 = download phase, 0.5+ = installer running phase.
+                // Throttle progress to ~every 64 reads (~5 MB) to avoid UI churn.
+                if (total is > 0 && (++reportTick & 0x3F) == 0)
+                {
+                    InstallProgress?.Invoke(serviceId, 0.45 * ((double)copied / total.Value));
+                }
+            }
+        }
 
         InstallProgress?.Invoke(serviceId, 0.5);
         InstallLog?.Invoke(serviceId, "Running Ollama installer...");
@@ -114,6 +146,15 @@ public class InstallerService : IDisposable
             : Path.Combine(installDir, service.RelativeInstallPath);
 
         return Directory.Exists(targetPath);
+    }
+
+    private static void EnsureOnPath(string exe, string friendlyName, string installUrl)
+    {
+        if (!IsOnPath(exe))
+        {
+            throw new InvalidOperationException(
+                $"{friendlyName} was not found in PATH. Install it from {installUrl}, then restart TensorLay.");
+        }
     }
 
     private static bool IsOnPath(string exe)
