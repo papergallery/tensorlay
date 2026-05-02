@@ -62,11 +62,16 @@ public class InstallerService : IDisposable
             }
             if (requirementsFile is not null)
             {
-                EnsureOnPath("python", "Python 3", "https://www.python.org/downloads/windows/");
+                // For sd-forge etc. service.PythonExecutable is "py" with
+                // PythonInterpreterArgs="-3.10" — must match the runtime
+                // launcher so pip installs into the same Python that runs
+                // the service.
+                EnsureOnPath(service.PythonExecutable, "Python 3", "https://www.python.org/downloads/windows/");
                 InstallLog?.Invoke(service.Id, $"Installing pip requirements ({requirementsFile})...");
-                // `python -m pip` works even when pip.exe is not on PATH (common
-                // on Microsoft Store Python installs).
-                await RunProcess("python", $"-m pip install -r {requirementsFile}", targetPath, service.Id);
+                string pipArgs = string.IsNullOrEmpty(service.PythonInterpreterArgs)
+                    ? $"-m pip install -r {requirementsFile}"
+                    : $"{service.PythonInterpreterArgs} -m pip install -r {requirementsFile}";
+                await RunProcess(service.PythonExecutable, pipArgs, targetPath, service.Id);
             }
 
             InstallProgress?.Invoke(service.Id, 1.0);

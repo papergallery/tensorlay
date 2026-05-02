@@ -18,7 +18,11 @@ public static class ServiceRegistry
             RelativeInstallPath = "sd-forge",
             // Forge pins torch==2.3.1, which has no wheels for Python 3.13+.
             // Use the Windows Python Launcher (`py.exe`) to force 3.10 even
-            // when a newer Python is the system default.
+            // when a newer Python is the system default. The same prefix is
+            // used both for `pip install -r requirements_versions.txt` at
+            // install time and for launching `launch.py` at start time.
+            PythonExecutable = "py",
+            PythonInterpreterArgs = "-3.10",
             StartExecutable = "py",
             StartArguments = "-3.10 launch.py --api --listen --port 7860 --skip-torch-cuda-test --no-download-sd-model",
             ModelsSubfolder = "models/Stable-diffusion",
