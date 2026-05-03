@@ -26,11 +26,20 @@ public static class ServiceRegistry
             // Forge's requirements_versions.txt lists `torch` unpinned, so a
             // plain pip resolve picks the CPU wheel from PyPI. Install the
             // CUDA wheel first; the requirements step then sees torch already
-            // satisfied and skips it. Pinned to torch==2.3.1 to match what
-            // upstream Forge's launch.py prepare_environment() installs.
+            // satisfied and skips it.
+            //
+            // The `+cu121` local version specifier is load-bearing: with plain
+            // `torch==2.3.1 --extra-index-url …/cu121` pip is free to pick the
+            // CPU wheel from PyPI (extra-index ADDS to indexes, doesn't
+            // replace), and on a machine that already has CPU torch installed
+            // it would just stay put. `+cu121` makes the CUDA wheel the only
+            // version that matches the constraint.
+            //
+            // `--force-reinstall` covers the case where a prior failed install
+            // (e.g. v0.8.5 without PreInstallCommand) left torch-cpu in place.
             PreInstallCommands = new List<string>
             {
-                "-3.10 -m pip install torch==2.3.1 torchvision --extra-index-url https://download.pytorch.org/whl/cu121"
+                "-3.10 -m pip install --force-reinstall torch==2.3.1+cu121 torchvision==0.18.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121"
             },
             StartExecutable = "py",
             StartArguments = "-3.10 launch.py --api --listen --port 7860 --no-download-sd-model",
