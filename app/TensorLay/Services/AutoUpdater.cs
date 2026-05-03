@@ -162,11 +162,21 @@ public class AutoUpdater : IDisposable
                 """;
             File.WriteAllText(scriptPath, script, Encoding.UTF8);
 
-            // Launch elevated (UAC prompt) so it can write to Program Files
+            // Resolve full path to powershell.exe — ShellExecute with
+            // Verb="runas" can't always find it via PATH, and on some Win11
+            // setups CWD inheritance fails with "system cannot find the file
+            // specified" if the calling process's working directory is gone.
+            // Falling back to pwsh.exe (PowerShell 7) covers minimal Win11
+            // images that ship without Windows PowerShell.
+            string sysDir = Environment.GetFolderPath(Environment.SpecialFolder.System);
+            string winPs = Path.Combine(sysDir, "WindowsPowerShell", "v1.0", "powershell.exe");
+            string psExe = File.Exists(winPs) ? winPs : "pwsh.exe";
+
             Process.Start(new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = psExe,
                 Arguments = $"-ExecutionPolicy Bypass -WindowStyle Hidden -File \"{Esc(scriptPath)}\"",
+                WorkingDirectory = Path.GetTempPath(),
                 UseShellExecute = true,
                 Verb = "runas",
                 WindowStyle = ProcessWindowStyle.Hidden

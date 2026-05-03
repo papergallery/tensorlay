@@ -23,8 +23,17 @@ public static class ServiceRegistry
             // install time and for launching `launch.py` at start time.
             PythonExecutable = "py",
             PythonInterpreterArgs = "-3.10",
+            // Forge's requirements_versions.txt lists `torch` unpinned, so a
+            // plain pip resolve picks the CPU wheel from PyPI. Install the
+            // CUDA wheel first; the requirements step then sees torch already
+            // satisfied and skips it. Pinned to torch==2.3.1 to match what
+            // upstream Forge's launch.py prepare_environment() installs.
+            PreInstallCommands = new List<string>
+            {
+                "-3.10 -m pip install torch==2.3.1 torchvision --extra-index-url https://download.pytorch.org/whl/cu121"
+            },
             StartExecutable = "py",
-            StartArguments = "-3.10 launch.py --api --listen --port 7860 --skip-torch-cuda-test --no-download-sd-model",
+            StartArguments = "-3.10 launch.py --api --listen --port 7860 --no-download-sd-model",
             ModelsSubfolder = "models/Stable-diffusion",
             UseSystemInstaller = false
         },

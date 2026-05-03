@@ -87,6 +87,16 @@ public class InstallerService : IDisposable
                     }
                 }
 
+                // PreInstallCommands run before requirements*.txt so a service
+                // can pin specific wheels (e.g. CUDA torch from a custom index)
+                // that requirements_versions.txt would otherwise satisfy with
+                // the wrong build.
+                foreach (var preCmd in service.PreInstallCommands)
+                {
+                    InstallLog?.Invoke(service.Id, $"Pre-install: {service.PythonExecutable} {preCmd}");
+                    await RunProcess(service.PythonExecutable, preCmd, targetPath, service.Id);
+                }
+
                 InstallLog?.Invoke(service.Id, $"Installing pip requirements ({requirementsFile})...");
                 string pipArgs = string.IsNullOrEmpty(service.PythonInterpreterArgs)
                     ? $"-m pip install -r {requirementsFile}"

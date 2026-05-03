@@ -21,4 +21,13 @@ public class ServiceDefinition
     // wheels for 3.13+, so we use the Windows Python Launcher: "py" + "-3.10").
     public string PythonExecutable { get; init; } = "python";
     public string PythonInterpreterArgs { get; init; } = "";
+
+    // Extra pip steps to run AFTER the runtime is ready but BEFORE
+    // requirements*.txt. Each entry is the argument string passed to
+    // PythonExecutable (e.g. "-3.10 -m pip install torch==2.3.1 torchvision
+    // --extra-index-url https://download.pytorch.org/whl/cu121"). Used by
+    // sd-forge to pin CUDA torch — requirements_versions.txt lists `torch`
+    // unpinned, so plain pip resolves to the CPU wheel and Forge then crashes
+    // at start with "Torch not compiled with CUDA enabled".
+    public List<string> PreInstallCommands { get; init; } = new();
 }
