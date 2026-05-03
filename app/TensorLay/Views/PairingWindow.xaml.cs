@@ -101,6 +101,12 @@ public partial class PairingWindow : Window
                 // Pin the VPS's SSH host keys so any future Connect that
                 // negotiates a different key (= different server) is rejected.
                 settings.SshHostKeyFingerprints = result.HostKeyFingerprints ?? new List<string>();
+                // v0.9.0 — store the rotated remote-tasks bearer. Empty when
+                // the relay is older than 1.3.0; the polling loop checks for
+                // this and stays idle until the user repairs against a newer
+                // relay. We don't auto-enable AllowRemoteInstallRequests —
+                // user has to flip it in Settings explicitly.
+                settings.RemoteTasksToken = result.RemoteTasksToken ?? "";
                 _settingsService.Save(settings);
 
                 SetStatus("Paired successfully!", false);

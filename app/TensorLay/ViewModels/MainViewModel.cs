@@ -18,6 +18,12 @@ public partial class MainViewModel : ViewModelBase
     private readonly SshTunnelService _sshTunnelService;
     private readonly PairingService _pairingService;
     private readonly SshKeyService _sshKeyService;
+    private readonly RemoteTaskService _remoteTaskService;
+    // FIFO queue for tasks that arrive while another approval modal is open.
+    // Drained one-at-a-time on each DecisionMade event, so a burst of agent
+    // submissions doesn't pile up overlapping windows.
+    private readonly Queue<Models.RemoteTask> _pendingRemoteTasks = new();
+    private bool _isApprovalModalOpen;
 
     [ObservableProperty]
     private ObservableCollection<ServiceViewModel> _services = new();
@@ -48,6 +54,18 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isPaired;
 
+    // Number of pending remote install requests in the queue (badge in nav).
+    // Updated when RemoteTaskService surfaces a task and when the approval
+    // modal's DecisionMade dequeues one.
+    [ObservableProperty]
+    private int _pendingRemoteTaskCount;
+
+    // True when the relay supports remote tasks (i.e. /pair returned a
+    // non-empty remote_tasks_token). Drives whether the Settings toggle is
+    // interactive vs grayed-out with "update your relay" tooltip.
+    [ObservableProperty]
+    private bool _remoteTasksSupported;
+
     public int ActiveServicesCount =>
         Services.Count(s => s.State == ServiceState.Running);
 
@@ -59,6 +77,13 @@ public partial class MainViewModel : ViewModelBase
 
     public bool HasModels =>
         TotalModelsCount > 0;
+
+    public bool HasPendingRemoteTasks => PendingRemoteTaskCount > 0;
+
+    partial void OnPendingRemoteTaskCountChanged(int value)
+    {
+        OnPropertyChanged(nameof(HasPendingRemoteTasks));
+    }
 
     public void NotifyCountersChanged()
     {
@@ -77,7 +102,8 @@ public partial class MainViewModel : ViewModelBase
         GpuMonitor gpuMonitor,
         SshTunnelService sshTunnelService,
         PairingService pairingService,
-        SshKeyService sshKeyService)
+        SshKeyService sshKeyService,
+        RemoteTaskService remoteTaskService)
     {
         _processManager = processManager;
         _healthCheckService = healthCheckService;
@@ -88,8 +114,11 @@ public partial class MainViewModel : ViewModelBase
         _sshTunnelService = sshTunnelService;
         _pairingService = pairingService;
         _sshKeyService = sshKeyService;
+        _remoteTaskService = remoteTaskService;
 
-        IsPaired = settingsService.Load().IsPaired;
+        var s = settingsService.Load();
+        IsPaired = s.IsPaired;
+        RemoteTasksSupported = !string.IsNullOrEmpty(s.RemoteTasksToken);
     }
 
     public void Initialize()
@@ -111,6 +140,55 @@ public partial class MainViewModel : ViewModelBase
         _sshTunnelService.TunnelLog += OnTunnelLog;
         _processManager.OutputReceived += OnProcessOutput;
         _installerService.InstallLog += OnInstallLog;
+
+        _remoteTaskService.TaskReceived += OnRemoteTaskReceived;
+        _remoteTaskService.RemoteTaskLog += msg => RunOnUI(() => AddLog($"[remote] {msg}"));
+
+        // Start polling only if pairing + supported relay + user opt-in all
+        // line up. Settings toggle changes call StartRemotePolling/StopRemotePolling
+        // explicitly so the loop reflects the current state without a relaunch.
+        var settings = _settingsService.Load();
+        if (settings.IsPaired && settings.AllowRemoteInstallRequests
+            && !string.IsNullOrEmpty(settings.RemoteTasksToken))
+        {
+            _remoteTaskService.StartPolling();
+        }
+    }
+
+    public void StartRemotePolling() => _remoteTaskService.StartPolling();
+    public Task StopRemotePolling() => _remoteTaskService.StopPolling();
+
+    private void OnRemoteTaskReceived(Models.RemoteTask task)
+    {
+        RunOnUI(() =>
+        {
+            _pendingRemoteTasks.Enqueue(task);
+            PendingRemoteTaskCount = _pendingRemoteTasks.Count + (_isApprovalModalOpen ? 1 : 0);
+            ShowNextRemoteTaskIfIdle();
+        });
+    }
+
+    private void ShowNextRemoteTaskIfIdle()
+    {
+        if (_isApprovalModalOpen) return;
+        if (_pendingRemoteTasks.Count == 0) return;
+
+        var task = _pendingRemoteTasks.Dequeue();
+        PendingRemoteTaskCount = _pendingRemoteTasks.Count + 1; // include the one we're showing
+        _isApprovalModalOpen = true;
+
+        var vm = new RemoteInstallViewModel(_remoteTaskService, _settingsService, task);
+        var window = new Views.RemoteInstallApprovalWindow(vm)
+        {
+            Owner = System.Windows.Application.Current.MainWindow,
+        };
+        window.Closed += (_, _) =>
+        {
+            _isApprovalModalOpen = false;
+            PendingRemoteTaskCount = _pendingRemoteTasks.Count;
+            ShowNextRemoteTaskIfIdle();
+        };
+        window.Show();   // non-modal so other UI stays responsive while a download runs
     }
 
     private void OnGpuInfoUpdated(GpuInfo info)
@@ -237,10 +315,22 @@ public partial class MainViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void OpenSettings()
+    private async Task OpenSettings()
     {
+        bool wasPolling = _remoteTaskService.IsRunning;
         var window = new Views.SettingsWindow(_settingsService);
-        window.ShowDialog();
+        if (window.ShowDialog() != true) return;
+
+        // Settings was saved (Save button, not Cancel) — reconcile the
+        // polling loop with the new flag state. Toggle ON → start; OFF →
+        // stop; unchanged → no-op.
+        var settings = _settingsService.Load();
+        bool shouldPoll = settings.IsPaired && settings.AllowRemoteInstallRequests
+                          && !string.IsNullOrEmpty(settings.RemoteTasksToken);
+        if (shouldPoll && !wasPolling)
+            _remoteTaskService.StartPolling();
+        else if (!shouldPoll && wasPolling)
+            await _remoteTaskService.StopPolling().ConfigureAwait(true);
     }
 
     [RelayCommand]

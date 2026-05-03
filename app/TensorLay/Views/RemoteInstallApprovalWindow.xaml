@@ -1,0 +1,187 @@
+<Window x:Class="TensorLay.Views.RemoteInstallApprovalWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:converters="clr-namespace:TensorLay.Converters"
+        Title="Remote Install Request" Width="560" Height="500"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="White"
+        Foreground="#1A1A1A"
+        FontFamily="Segoe UI"
+        WindowStyle="SingleBorderWindow"
+        UseLayoutRounding="True">
+
+    <Window.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVisibility"/>
+    </Window.Resources>
+
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="40"
+                      ResizeBorderThickness="0"
+                      GlassFrameThickness="0,0,0,1"
+                      CornerRadius="0"/>
+    </WindowChrome.WindowChrome>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="40"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Title bar -->
+        <Border Grid.Row="0" Background="White" BorderBrush="#F0EDE8" BorderThickness="0,0,0,1">
+            <Grid>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
+                            HorizontalAlignment="Left" Margin="16,0,0,0">
+                    <Grid Width="22" Height="22" Margin="0,0,8,0">
+                        <Ellipse Width="13" Height="13" StrokeThickness="1.8"
+                                 Stroke="#6C5CE7" HorizontalAlignment="Left"/>
+                        <Ellipse Width="13" Height="13" StrokeThickness="1.8"
+                                 Stroke="#2ECC71" HorizontalAlignment="Right"/>
+                    </Grid>
+                    <TextBlock FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center">
+                        <Run Text="Tensor" Foreground="#6C5CE7"/><Run Text="Lay" Foreground="#2ECC71"/>
+                    </TextBlock>
+                    <TextBlock Text="  —  Remote Install Request" FontSize="12" Foreground="#9B9B9B"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+                <Button Click="OnRejectClicked" Width="46" HorizontalAlignment="Right"
+                        VerticalAlignment="Stretch" Background="Transparent"
+                        BorderThickness="0" Cursor="Hand"
+                        WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="Transparent">
+                                <TextBlock Text="&#xE8BB;" FontFamily="Segoe Fluent Icons,Segoe MDL2 Assets"
+                                           FontSize="11" Foreground="#6B6B6B"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="#F3E5E1"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </Grid>
+        </Border>
+
+        <!-- Body -->
+        <Grid Grid.Row="1" Margin="36,24,36,24">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Source -->
+            <StackPanel Grid.Row="0" Margin="0,0,0,16">
+                <TextBlock Text="REQUEST FROM" FontSize="10" FontWeight="SemiBold"
+                           Foreground="#9B9B9B"/>
+                <TextBlock Text="{Binding AgentLabel}" FontSize="14" FontWeight="SemiBold"
+                           Foreground="#1A1A1A" Margin="0,3,0,0"/>
+            </StackPanel>
+
+            <!-- Model -->
+            <StackPanel Grid.Row="1" Margin="0,0,0,12">
+                <TextBlock Text="MODEL" FontSize="10" FontWeight="SemiBold"
+                           Foreground="#9B9B9B"/>
+                <TextBlock Text="{Binding DisplayName}" FontSize="16" FontWeight="SemiBold"
+                           Foreground="#1A1A1A" Margin="0,3,0,2" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding SourceUrl}" FontSize="11" Foreground="#9B9B9B"
+                           FontFamily="Consolas" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"/>
+            </StackPanel>
+
+            <!-- For service -->
+            <StackPanel Grid.Row="2" Margin="0,0,0,12">
+                <TextBlock Text="INSTALL TO" FontSize="10" FontWeight="SemiBold"
+                           Foreground="#9B9B9B"/>
+                <TextBlock FontSize="13" Foreground="#1A1A1A" Margin="0,3,0,0"
+                           TextWrapping="Wrap">
+                    <Run Text="{Binding ServiceLabel}" FontWeight="SemiBold"/>
+                    <Run Text="  —  "/>
+                    <Run Text="{Binding TargetFolder}" FontFamily="Consolas" Foreground="#6B6B6B"/>
+                </TextBlock>
+            </StackPanel>
+
+            <!-- Size -->
+            <StackPanel Grid.Row="3" Margin="0,0,0,12">
+                <TextBlock Text="SIZE" FontSize="10" FontWeight="SemiBold"
+                           Foreground="#9B9B9B"/>
+                <TextBlock Text="{Binding SizeMbDisplay}" FontSize="13" Foreground="#1A1A1A"
+                           Margin="0,3,0,0" FontFamily="Consolas"/>
+            </StackPanel>
+
+            <!-- Reason (optional) -->
+            <Border Grid.Row="4" Background="#F7F6F3" CornerRadius="6" Padding="12,10"
+                    Margin="0,0,0,12"
+                    Visibility="{Binding HasReason, Converter={StaticResource BoolToVisibility}}">
+                <StackPanel>
+                    <TextBlock Text="REASON" FontSize="10" FontWeight="SemiBold"
+                               Foreground="#9B9B9B" Margin="0,0,0,4"/>
+                    <TextBlock Text="{Binding Reason}" FontSize="12" Foreground="#1A1A1A"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Spacer -->
+            <Grid Grid.Row="5"/>
+
+            <!-- Download progress (during/after Approve) -->
+            <StackPanel Grid.Row="6" Margin="0,0,0,12"
+                        Visibility="{Binding IsDownloading, Converter={StaticResource BoolToVisibility}}">
+                <DockPanel LastChildFill="False" Margin="0,0,0,4">
+                    <TextBlock Text="{Binding StatusMessage}" FontSize="11" Foreground="#6B6B6B"/>
+                    <TextBlock DockPanel.Dock="Right"
+                               Text="{Binding DownloadProgress, StringFormat='{}{0:F0}%'}"
+                               FontSize="11" Foreground="#9B9B9B"/>
+                </DockPanel>
+                <ProgressBar Height="6" Minimum="0" Maximum="100"
+                             Value="{Binding DownloadProgress}"/>
+            </StackPanel>
+
+            <!-- Decision buttons -->
+            <DockPanel Grid.Row="7" LastChildFill="False">
+                <!-- Expiry hint left-aligned -->
+                <TextBlock VerticalAlignment="Center" FontSize="10.5" Foreground="#9B9B9B">
+                    <Run Text="Expires "/>
+                    <Run Text="{Binding ExpiresDisplay}" FontWeight="SemiBold"/>
+                </TextBlock>
+
+                <!-- Buttons right-aligned (declared right-most first because DockPanel) -->
+                <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}"
+                        Padding="18,8" FontSize="13" Margin="8,0,0,0"
+                        Content="Approve and Download"
+                        Command="{Binding ApproveCommand}"
+                        Visibility="{Binding IsDownloading, Converter={StaticResource BoolToVisibility}, ConverterParameter=Invert}"/>
+                <Button DockPanel.Dock="Right" Style="{StaticResource SecondaryButton}"
+                        Padding="18,8" FontSize="13" Margin="8,0,0,0"
+                        Content="Reject"
+                        Command="{Binding RejectCommand}"
+                        Visibility="{Binding IsDownloading, Converter={StaticResource BoolToVisibility}, ConverterParameter=Invert}"/>
+                <Button DockPanel.Dock="Right" Style="{StaticResource DangerButton}"
+                        Padding="18,8" FontSize="13"
+                        Content="Cancel Download"
+                        Command="{Binding CancelDownloadCommand}"
+                        Visibility="{Binding IsDownloading, Converter={StaticResource BoolToVisibility}}"/>
+            </DockPanel>
+
+            <!-- Always-reject footer link -->
+            <TextBlock Grid.Row="7" Margin="0,32,0,0"
+                       FontSize="10.5" Foreground="#9B9B9B"
+                       VerticalAlignment="Bottom" HorizontalAlignment="Left"
+                       Visibility="{Binding IsDownloading, Converter={StaticResource BoolToVisibility}, ConverterParameter=Invert}">
+                <Hyperlink Click="OnAlwaysRejectClicked" Foreground="#9B9B9B"
+                           TextDecorations="Underline">
+                    Always reject from this source
+                </Hyperlink>
+            </TextBlock>
+        </Grid>
+    </Grid>
+</Window>

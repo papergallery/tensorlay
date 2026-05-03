@@ -35,6 +35,14 @@ public partial class SettingsViewModel : ViewModelBase
     private bool _autoconnectTunnel;
 
     [ObservableProperty]
+    private bool _allowRemoteInstallRequests;
+
+    // True only when the relay returned a non-empty remote_tasks_token at
+    // pair time (i.e. relay >= v1.3.0). Toggle is grayed out when false.
+    [ObservableProperty]
+    private bool _remoteInstallSupported;
+
+    [ObservableProperty]
     private string _connectionTestResult = "";
 
     public SettingsViewModel(SettingsService settingsService)
@@ -53,23 +61,27 @@ public partial class SettingsViewModel : ViewModelBase
         SshPort = settings.SshPort;
         AutostartWithWindows = settings.AutostartWithWindows;
         AutoconnectTunnel = settings.AutoconnectTunnel;
+        AllowRemoteInstallRequests = settings.AllowRemoteInstallRequests;
+        RemoteInstallSupported = !string.IsNullOrEmpty(settings.RemoteTasksToken);
     }
 
     [RelayCommand]
     private void Save()
     {
-        var settings = new AppSettings
-        {
-            VpsHost = VpsHost,
-            VpsUser = VpsUser,
-            SshKeyPath = SshKeyPath,
-            InstallDirectory = InstallDirectory,
-            SshPort = SshPort,
-            AutostartWithWindows = AutostartWithWindows,
-            AutoconnectTunnel = AutoconnectTunnel,
-            EnabledServices = _settingsService.Load().EnabledServices
-        };
-
+        // Mutate the existing settings instance — constructing a fresh
+        // AppSettings here would silently wipe IsPaired, SshHostKeyFingerprints,
+        // RemoteTasksToken, RejectedAgentLabels, etc. Pre-0.9.0 the Save()
+        // path was unintentionally clobbering pairing state on every click;
+        // keep all unrelated fields intact.
+        var settings = _settingsService.Load();
+        settings.VpsHost = VpsHost;
+        settings.VpsUser = VpsUser;
+        settings.SshKeyPath = SshKeyPath;
+        settings.InstallDirectory = InstallDirectory;
+        settings.SshPort = SshPort;
+        settings.AutostartWithWindows = AutostartWithWindows;
+        settings.AutoconnectTunnel = AutoconnectTunnel;
+        settings.AllowRemoteInstallRequests = AllowRemoteInstallRequests;
         _settingsService.Save(settings);
     }
 

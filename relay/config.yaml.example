@@ -1,0 +1,44 @@
+# TensorLay Relay configuration (v1.3.0+).
+#
+# install.sh copies this template to /opt/tensorlay-relay/config.yaml the
+# first time. Edit the live copy, not this template, then:
+#
+#     sudo systemctl restart tensorlay-relay
+#
+# Every key here has a compiled-in default — missing or malformed entries
+# fall back silently. Values shown below are the defaults.
+
+tasks:
+  # How long a pending (un-decided) install request stays in the queue
+  # before the relay flips it to 'expired'. Desktop never sees expired
+  # tasks. Bump this if you want a longer "respond when you wake up"
+  # window.
+  ttl_seconds: 86400               # 24 hours
+
+  # Background sweep cadence. The same loop expires stale-pending rows
+  # AND purges terminal rows older than terminal_retention_seconds.
+  expire_check_interval: 300       # 5 min
+
+  # Audit-trail window for completed/rejected/expired/revoked tasks.
+  # After this they're hard-deleted. Lower it if you want less history.
+  terminal_retention_seconds: 604800   # 7 days
+
+allowlist:
+  # Hostname-suffix allowlist for POST /api/tasks/install-model.
+  # Suffix match means `cdn.huggingface.co` matches `huggingface.co`,
+  # but `evil-huggingface.co` does NOT (no leading dot match).
+  # Submitted URLs must be https; http is rejected before allowlist check.
+  hosts:
+    - huggingface.co
+    - hf.co
+    - civitai.com
+    - github.com
+    - objects.githubusercontent.com
+    - cdn-lfs.huggingface.co
+    - cdn-lfs-us-1.huggingface.co
+
+agent:
+  # Human-readable label shown in the desktop's approval modal as
+  # "From: <label>". Default is fine for single-VPS setups; rename if
+  # you run multiple relays so the user can tell them apart.
+  label: "VPS agent"

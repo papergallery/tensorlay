@@ -22,4 +22,24 @@ public class AppSettings
     // list on every Connect — empty list means "not yet pinned, accept the
     // first observation" (legacy clients upgrading from < 0.8.0).
     public List<string> SshHostKeyFingerprints { get; set; } = new();
+
+    // v0.9.0 — remote install requests.
+    //
+    // Master switch for the polling loop. Default OFF so a fresh pairing
+    // doesn't silently grant the VPS the ability to queue downloads — user
+    // has to flip this in Settings explicitly. Off ⇒ RemoteTaskService
+    // never polls, the relay queue is invisible.
+    public bool AllowRemoteInstallRequests { get; set; } = false;
+
+    // Bearer token for /api/tasks/* on the relay. Issued at /pair time
+    // (rotated on every re-pair). DPAPI-encrypted at rest by SettingsService
+    // — the value on disk is "DPAPI:<base64>", decrypted only on Load().
+    // Empty if the relay is < v1.3.0 (the field is absent from PairResponse
+    // and JSON deserialization leaves it at default).
+    public string RemoteTasksToken { get; set; } = "";
+
+    // "Always reject from this source" persists across restarts so the user
+    // doesn't see the same modal again after dismissing it. Compared against
+    // RemoteTask.AgentLabel.
+    public List<string> RejectedAgentLabels { get; set; } = new();
 }

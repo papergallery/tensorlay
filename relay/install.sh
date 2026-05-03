@@ -36,12 +36,13 @@ FASTAPI_VERSION="0.115.6"
 UVICORN_VERSION="0.32.1"
 SLOWAPI_VERSION="0.1.9"
 PYDANTIC_VERSION="2.10.4"
+PYYAML_VERSION="6.0.2"   # v1.3.0+ — config.yaml parsing
 
-echo -e "${GREEN}[1/7]${NC} Installing system dependencies..."
+echo -e "${GREEN}[1/8]${NC} Installing system dependencies..."
 apt-get update -qq
 apt-get install -y -qq python3 python3-venv python3-pip curl > /dev/null 2>&1
 
-echo -e "${GREEN}[2/7]${NC} Creating ${RELAY_USER} system user..."
+echo -e "${GREEN}[2/8]${NC} Creating ${RELAY_USER} system user..."
 if ! id -u "${RELAY_USER}" > /dev/null 2>&1; then
     # System user, no login shell, dedicated home for ~/.ssh/authorized_keys.
     useradd \
@@ -64,7 +65,7 @@ touch "${RELAY_HOME}/.ssh/authorized_keys"
 chown "${RELAY_USER}:${RELAY_USER}" "${RELAY_HOME}/.ssh/authorized_keys"
 chmod 0600 "${RELAY_HOME}/.ssh/authorized_keys"
 
-echo -e "${GREEN}[3/7]${NC} Setting up ${RELAY_DIR}..."
+echo -e "${GREEN}[3/8]${NC} Setting up ${RELAY_DIR}..."
 mkdir -p "${RELAY_DIR}"
 curl -sL -H "Accept: text/plain" "${RELAY_URL}" -o "${RELAY_DIR}/relay.py"
 # Verify it's actually Python, not HTML (CDN/cache misroute).
@@ -79,25 +80,61 @@ if head -1 "${RELAY_DIR}/relay.py" | grep -q "^<"; then
 fi
 chmod +x "${RELAY_DIR}/relay.py"
 
-echo -e "${GREEN}[4/7]${NC} Installing Python dependencies (venv)..."
+# Seed config.yaml on first install. Idempotent — never overwrites a
+# config the user has already customized.
+CONFIG_URL="https://tensorlay.com/config.yaml.example"
+if [ ! -f "${RELAY_DIR}/config.yaml" ]; then
+    if curl -fsSL -H "Accept: text/plain" "${CONFIG_URL}" -o "${RELAY_DIR}/config.yaml" 2>/dev/null \
+       && ! head -1 "${RELAY_DIR}/config.yaml" | grep -q "^<"; then
+        echo "  Wrote default config.yaml from template"
+    else
+        # Fallback: leave the file absent. relay.py uses compiled-in defaults
+        # in that case, so the relay still works — just without admin
+        # customization until they create the file by hand.
+        rm -f "${RELAY_DIR}/config.yaml"
+        echo "  config.yaml.example unavailable — relay will use built-in defaults"
+    fi
+fi
+
+echo -e "${GREEN}[4/8]${NC} Installing Python dependencies (venv)..."
 python3 -m venv "${VENV_DIR}"
 "${VENV_DIR}/bin/pip" install --quiet --upgrade pip
 "${VENV_DIR}/bin/pip" install --quiet \
     "fastapi==${FASTAPI_VERSION}" \
     "uvicorn==${UVICORN_VERSION}" \
     "slowapi==${SLOWAPI_VERSION}" \
-    "pydantic==${PYDANTIC_VERSION}"
+    "pydantic==${PYDANTIC_VERSION}" \
+    "pyyaml==${PYYAML_VERSION}"
 
-# Relay user owns the entire RELAY_DIR (relay.py, venv, pairing_code, service_token).
+# Relay user owns the entire RELAY_DIR (relay.py, venv, pairing_code, service_token,
+# tasks.db, agent_token, remote_tasks_token, config.yaml).
 chown -R "${RELAY_USER}:${RELAY_USER}" "${RELAY_DIR}"
 
-echo -e "${GREEN}[5/7]${NC} Generating pairing code..."
+echo -e "${GREEN}[5/8]${NC} Generating pairing code..."
 PAIRING_CODE=$(python3 -c "import secrets; print(secrets.token_hex(4).upper())")
 echo "${PAIRING_CODE}" > "${RELAY_DIR}/pairing_code"
 chown "${RELAY_USER}:${RELAY_USER}" "${RELAY_DIR}/pairing_code"
 chmod 0600 "${RELAY_DIR}/pairing_code"
 
-echo -e "${GREEN}[6/7]${NC} Creating systemd service..."
+# Issue agent token if absent. Re-running install.sh keeps the existing
+# token (idempotent) — admin rotates explicitly via:
+#   sudo -u tensorlay /opt/tensorlay-relay/venv/bin/python relay.py --issue-agent-token
+echo -e "${GREEN}[6/8]${NC} Issuing agent token..."
+AGENT_TOKEN=""
+if [ ! -f "${RELAY_DIR}/agent_token" ]; then
+    AGENT_TOKEN=$(sudo -u "${RELAY_USER}" "${VENV_DIR}/bin/python" \
+        "${RELAY_DIR}/relay.py" --issue-agent-token 2>/dev/null \
+        | grep -oP '(?<=Agent token: )\S+' || true)
+    if [ -z "${AGENT_TOKEN}" ]; then
+        echo -e "  ${YELLOW}warning: --issue-agent-token did not return a value${NC}"
+    else
+        echo "  Generated new agent token (printed at end of install)"
+    fi
+else
+    echo "  Agent token already exists — keeping as-is"
+fi
+
+echo -e "${GREEN}[7/8]${NC} Creating systemd service..."
 cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
 Description=TensorLay Relay
@@ -140,7 +177,7 @@ systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}" > /dev/null 2>&1
 systemctl restart "${SERVICE_NAME}"
 
-echo -e "${GREEN}[7/7]${NC} Configuring firewall..."
+echo -e "${GREEN}[8/8]${NC} Configuring firewall..."
 if command -v ufw > /dev/null 2>&1; then
     ufw allow 8090/tcp > /dev/null 2>&1 || true
     echo "  UFW: port 8090 opened (rate-limited by relay)"
@@ -154,6 +191,15 @@ echo ""
 echo -e "  Enter this code in TensorLay desktop app to connect."
 echo -e "  The code is ${YELLOW}single-use${NC} — it will expire after pairing."
 echo ""
+if [ -n "${AGENT_TOKEN}" ]; then
+    echo -e "  ${BOLD}Agent token (for remote install requests, v0.9.0+):${NC}"
+    echo -e "  ${CYAN}${BOLD}${AGENT_TOKEN}${NC}"
+    echo ""
+    echo -e "  Pass this to the agent (e.g. Claude Code on the VPS) via:"
+    echo -e "    ${CYAN}export TENSORLAY_AGENT_TOKEN='${AGENT_TOKEN}'${NC}"
+    echo -e "  Rotate later with: ${CYAN}sudo -u ${RELAY_USER} ${VENV_DIR}/bin/python ${RELAY_DIR}/relay.py --issue-agent-token${NC}"
+    echo ""
+fi
 echo -e "  Pairing keys are installed under user ${CYAN}${RELAY_USER}${NC} with"
 echo -e "  ${CYAN}restrict,permitlisten=...${NC} options — no shell access."
 echo ""

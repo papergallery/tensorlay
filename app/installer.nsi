@@ -15,7 +15,7 @@ Unicode True
 SetCompressor /SOLID lzma
 
 ; ─── Version ───
-!define VERSION "0.8.7"
+!define VERSION "0.9.0"
 VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName" "TensorLay"
 VIAddVersionKey "ProductVersion" "${VERSION}"
@@ -55,9 +55,22 @@ Page custom OptionsPage OptionsPageLeave
 
 !insertmacro MUI_PAGE_INSTFILES
 
-!define MUI_FINISHPAGE_RUN "$INSTDIR\TensorLay.exe"
+; Don't pass MUI_FINISHPAGE_RUN as a path — NSIS would Exec it directly,
+; inheriting the installer's elevated token, and TensorLay would run as
+; admin. Any service install (git clone, pip) it then performs would
+; create files owned by BUILTIN/Administrators, which later breaks Forge's
+; own git operations under the user account ("dubious ownership").
+; Trampoline through explorer.exe to drop elevation: Explorer always runs
+; as the interactive user (medium IL), so the app inherits the user's
+; token, not ours.
+!define MUI_FINISHPAGE_RUN
+!define MUI_FINISHPAGE_RUN_FUNCTION "RunAppNotElevated"
 !define MUI_FINISHPAGE_RUN_TEXT "Launch TensorLay"
 !insertmacro MUI_PAGE_FINISH
+
+Function RunAppNotElevated
+    Exec '"$WINDIR\explorer.exe" "$INSTDIR\TensorLay.exe"'
+FunctionEnd
 
 ; Uninstaller
 !insertmacro MUI_UNPAGE_CONFIRM

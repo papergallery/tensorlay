@@ -47,6 +47,20 @@ public class InstallerService : IDisposable
 
             await RunProcess("git", $"clone {service.GitRepoUrl} \"{targetPath}\"", installDir, service.Id);
 
+            // If TensorLay was launched elevated (e.g. inherited admin token
+            // from an installer auto-launch — fixed in installer.nsi as of
+            // 0.8.8 but still possible on legacy installs), the cloned files
+            // are owned by BUILTIN/Administrators. When Forge later runs git
+            // under the user account it refuses to operate on the repo with
+            // "fatal: detected dubious ownership". Mark the cloned tree (and
+            // its known sub-repos directory) as safe so git doesn't trip on
+            // ownership mismatch. Path uses forward slashes — git's
+            // safe.directory entries are case-sensitive and match the path
+            // git itself reports.
+            string safePath = targetPath.Replace('\\', '/');
+            await RunProcess("git", $"config --global --add safe.directory \"{safePath}\"", installDir, service.Id);
+            await RunProcess("git", $"config --global --add safe.directory \"{safePath}/repositories/*\"", installDir, service.Id);
+
             InstallProgress?.Invoke(service.Id, 0.6);
 
             // SD Forge ships only `requirements_versions.txt`; other forks may

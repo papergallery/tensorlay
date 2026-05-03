@@ -11,6 +11,10 @@ public class PairingResult
     public int SshPort { get; set; } = 22;
     public string ServiceToken { get; set; } = "";
     public List<string> HostKeyFingerprints { get; set; } = new();
+    // v0.9.0 — bearer for /api/tasks/* (remote install requests). Empty when
+    // pairing against a v1.2.x relay; the desktop then leaves the feature
+    // disabled and shows a hint in Settings ("update your relay").
+    public string RemoteTasksToken { get; set; } = "";
     public string Error { get; set; } = "";
 }
 

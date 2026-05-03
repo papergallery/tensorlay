@@ -102,6 +102,22 @@
                               Content="Auto-connect tunnel on startup"
                               Foreground="#1A1A1A"/>
 
+                    <!-- Divider -->
+                    <Border Height="1" Background="#EBEBEB" Margin="0,20,0,20"/>
+
+                    <!-- Remote install requests (v0.9.0+) -->
+                    <TextBlock Text="REMOTE INSTALL REQUESTS" FontSize="10" FontWeight="SemiBold"
+                               Foreground="#9B9B9B" Margin="0,0,0,12"/>
+                    <CheckBox IsChecked="{Binding AllowRemoteInstallRequests}"
+                              IsEnabled="{Binding RemoteInstallSupported}"
+                              Content="Allow the VPS agent to request model downloads"
+                              Foreground="#1A1A1A" Margin="0,0,0,6"/>
+                    <TextBlock FontSize="11" Foreground="#9B9B9B" TextWrapping="Wrap"
+                               Margin="22,0,0,0">
+                        Each request opens an approval dialog before any download starts.
+                        Pair against a v0.9.0+ relay to enable this.
+                    </TextBlock>
+
                 </StackPanel>
             </ScrollViewer>
 

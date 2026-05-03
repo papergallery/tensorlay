@@ -363,6 +363,18 @@
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#x25B3;" FontSize="15" Margin="0,0,10,0"/>
                             <TextBlock Text="Models" VerticalAlignment="Center"/>
+                            <!-- Pending remote-install requests badge (v0.9.0). Purple
+                                 fill matches the brand accent; visible only while there
+                                 are unhandled requests so it doesn't take screen space
+                                 in the steady state. -->
+                            <Border Background="#6C5CE7" CornerRadius="8" Padding="6,2"
+                                    Margin="8,0,0,0" VerticalAlignment="Center"
+                                    Visibility="{Binding HasPendingRemoteTasks,
+                                                 Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="{Binding PendingRemoteTaskCount}"
+                                           FontSize="10" FontWeight="SemiBold"
+                                           Foreground="White"/>
+                            </Border>
                         </StackPanel>
                     </Button>
 

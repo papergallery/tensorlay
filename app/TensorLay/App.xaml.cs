@@ -20,6 +20,7 @@ public partial class App : Application
     private HealthCheckService? _healthCheckService;
     private InstallerService? _installerService;
     private ModelDownloader? _modelDownloader;
+    private RemoteTaskService? _remoteTaskService;
     private GpuMonitor? _gpuMonitor;
     private SshTunnelService? _sshTunnelService;
     private AccountService? _accountService;
@@ -85,6 +86,7 @@ public partial class App : Application
         _sshTunnelService = new SshTunnelService(settingsService);
         _installerService = new InstallerService();
         _modelDownloader = new ModelDownloader(settingsService);
+        _remoteTaskService = new RemoteTaskService(settingsService, _modelDownloader);
 
         var pairingService = new PairingService();
         var sshKeyService = new SshKeyService();
@@ -98,7 +100,8 @@ public partial class App : Application
             _gpuMonitor,
             _sshTunnelService,
             pairingService,
-            sshKeyService);
+            sshKeyService,
+            _remoteTaskService);
 
         mainVm.Initialize();
 
@@ -158,6 +161,7 @@ public partial class App : Application
         try { _pipeCts?.Cancel(); } catch { /* ignore */ }
         _processManager?.Dispose();
         _healthCheckService?.Dispose();
+        _remoteTaskService?.Dispose();
         _modelDownloader?.Dispose();
         _gpuMonitor?.Dispose();
         _sshTunnelService?.Dispose();
