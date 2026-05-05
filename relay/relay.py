@@ -41,7 +41,7 @@ except ImportError:
 
 # ── Constants ─────────────────────────────────────────────────────────────
 
-VERSION = "1.3.3"
+VERSION = "1.3.4"
 DATA_DIR = Path("/opt/tensorlay-relay")
 PAIRING_CODE_FILE = DATA_DIR / "pairing_code"
 SERVICE_TOKEN_FILE = DATA_DIR / "service_token"
@@ -56,6 +56,16 @@ DEFAULT_TASK_TTL_SECONDS = 86400          # 24h before pending tasks auto-expire
 DEFAULT_TERMINAL_RETENTION_SECONDS = 7 * 86400  # keep finished tasks for 7d as audit trail
 DEFAULT_EXPIRE_INTERVAL_SECONDS = 300      # background sweep cadence
 DEFAULT_AGENT_LABEL = "VPS agent"
+# Reaper-failure suppression. The desktop agent at startup posts
+# state="failed" with reason like "Desktop restarted before completion" for
+# any task it found mid-download. That's not a real failure — the task was
+# just running when the agent restarted. Without suppression the user has
+# to re-approve from scratch (and lose the partial download). Bug observed
+# 2026-05-05: 3 of 5 model installs were killed inside a 10-second window.
+# When this pattern matches, the relay reverts the task to 'approved' so
+# the agent re-pulls it on the next poll without another GUI click.
+REAPER_FAILURE_PATTERN = re.compile(r"restart", re.IGNORECASE)
+
 DEFAULT_ALLOWLIST_HOSTS = [
     "huggingface.co",
     "hf.co",
@@ -714,6 +724,23 @@ def task_post_status(
                 (body.progress_pct, now, task_id),
             )
             return {"ok": True}
+        # Reaper-failure suppression — see REAPER_FAILURE_PATTERN docstring.
+        if (
+            current == "downloading"
+            and body.state == "failed"
+            and body.error_msg
+            and REAPER_FAILURE_PATTERN.search(body.error_msg)
+        ):
+            log.warning(
+                "reaper-failure suppressed for task %s (reason=%r) — reverting to approved",
+                task_id, body.error_msg,
+            )
+            conn.execute(
+                "UPDATE tasks SET state = 'approved', error_msg = NULL, "
+                "progress_pct = NULL, updated_at = ? WHERE id = ?",
+                (now, task_id),
+            )
+            return {"ok": True, "suppressed": "reaper-failure"}
         allowed_next = DESKTOP_TRANSITIONS.get(current, set())
         if body.state not in allowed_next:
             raise HTTPException(
