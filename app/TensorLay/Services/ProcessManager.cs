@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using TensorLay.Models;
 
 namespace TensorLay.Services;
@@ -17,6 +19,24 @@ public class ProcessManager : IDisposable
     {
         if (_processes.TryGetValue(service.Id, out var existing) && IsAlive(existing))
             return;
+
+        // System-installer services (Ollama on Windows) install themselves
+        // as a tray app that auto-binds its port at user login. By the time
+        // the user clicks Start the port is already taken — launching our
+        // own `ollama serve` produces:
+        //   "listen tcp 127.0.0.1:11434: bind: Only one usage of each
+        //    socket address (...) is normally permitted."
+        // Treat a bound port as "already running, externally managed":
+        // skip launch, log a note, and let HealthCheckService report the
+        // real state. Does mean Stop won't kill a tray-launched Ollama —
+        // user has to Quit it from the tray icon. Acceptable trade-off.
+        if (service.UseSystemInstaller && IsPortBound(service.Port))
+        {
+            OutputReceived?.Invoke(service.Id,
+                $"Port {service.Port} already in use — assuming {service.DisplayName} is " +
+                "already running (e.g. autostarted from system tray). Skipping launch.");
+            return;
+        }
 
         string workingDir = string.IsNullOrEmpty(service.RelativeInstallPath)
             ? installDir
@@ -101,6 +121,30 @@ public class ProcessManager : IDisposable
     {
         try { return !p.HasExited; }
         catch { return false; }
+    }
+
+    // True iff something on the local machine is already listening on `port`.
+    // Probe via TcpListener bind — if it throws SocketException with
+    // AddressAlreadyInUse, the port is taken. Stop the listener immediately
+    // either way (a successful bind would otherwise hold the port for ~30s
+    // in TIME_WAIT and prevent the legitimate service from starting).
+    private static bool IsPortBound(int port)
+    {
+        TcpListener? listener = null;
+        try
+        {
+            listener = new TcpListener(IPAddress.Loopback, port);
+            listener.Start();
+            return false;
+        }
+        catch (SocketException)
+        {
+            return true;
+        }
+        finally
+        {
+            try { listener?.Stop(); } catch { /* ignore */ }
+        }
     }
 
     public void Dispose()

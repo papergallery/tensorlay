@@ -103,9 +103,9 @@
                                               RelativeSource={RelativeSource AncestorType=UserControl}}"
                                     CommandParameter="{Binding}"/>
                             <TextBlock VerticalAlignment="Center" FontSize="12">
-                                <Run Text="{Binding FileName}" Foreground="#1A1A1A"/>
+                                <Run Text="{Binding FileName, Mode=OneWay}" Foreground="#1A1A1A"/>
                                 <Run Text=" (" Foreground="#9B9B9B"/>
-                                <Run Text="{Binding DisplaySize}" Foreground="#9B9B9B"/>
+                                <Run Text="{Binding DisplaySize, Mode=OneWay}" Foreground="#9B9B9B"/>
                                 <Run Text=")" Foreground="#9B9B9B"/>
                             </TextBlock>
                         </DockPanel>

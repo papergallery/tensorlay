@@ -1,13 +1,31 @@
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using TensorLay.Models;
 
 namespace TensorLay.Services;
 
 public class InstallerService : IDisposable
 {
-    private const string OllamaInstallerUrl = "https://ollama.com/download/OllamaSetup.exe";
+    private const string OllamaInstallerPrimaryUrl = "https://ollama.com/download/OllamaSetup.exe";
+    // GitHub Releases is the upstream source ollama.com mirrors from. Used
+    // as a fallback when ollama.com's CDN is degraded — verified live in
+    // 0.9.2 with a 200 Mbit user where ollama.com stalled after handshake
+    // and we waited the full 30-min HttpClient timeout with zero bytes.
+    private const string OllamaInstallerFallbackUrl = "https://github.com/ollama/ollama/releases/latest/download/OllamaSetup.exe";
+
+    // Idle (between-chunks) read timeout. The OllamaSetup.exe download is
+    // ~800 MB; on a healthy connection any 60-sec gap means the CDN has
+    // wedged and we should fail fast instead of blocking forever.
+    private static readonly TimeSpan OllamaIdleReadTimeout = TimeSpan.FromSeconds(60);
+    private const int OllamaMaxAttemptsPerUrl = 3;
+    // Anything smaller than this is dropped on retry rather than resumed —
+    // a tiny partial is more likely a redirect/error body than real data,
+    // and `Range: bytes=N-` against a server that doesn't send Content-Range
+    // would silently give us a bogus file otherwise.
+    private const long OllamaResumeMinBytes = 100L * 1024 * 1024;
 
     private bool _disposed;
 
@@ -26,11 +44,9 @@ public class InstallerService : IDisposable
 
             if (string.IsNullOrEmpty(service.GitRepoUrl))
             {
-                if (service.Id == "musicgen")
-                {
-                    throw new NotImplementedException(
-                        "MusicGen install is not yet supported. Install manually from https://github.com/facebookresearch/audiocraft.");
-                }
+                // Service has nothing to clone (e.g. system-installer services
+                // are handled above). Treat as a no-op — the registry is the
+                // source of truth for whether a service supports `Install`.
                 return;
             }
 
@@ -135,33 +151,45 @@ public class InstallerService : IDisposable
         InstallLog?.Invoke(serviceId, "Downloading OllamaSetup.exe...");
         InstallProgress?.Invoke(serviceId, 0.0);
 
-        // Default HttpClient.Timeout (100s) cannot finish ~700 MB on a typical
-        // residential link — must be raised. Stream into a FileStream instead
-        // of GetByteArrayAsync so the whole installer doesn't sit in RAM and so
-        // we can report progress.
-        using var httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
-        using (var response = await httpClient.GetAsync(OllamaInstallerUrl, HttpCompletionOption.ResponseHeadersRead))
+        // Try ollama.com first, then GitHub Releases. Within each URL,
+        // retry up to N times with a short backoff. Resume across attempts
+        // is handled inside DownloadOllamaInstaller so a stall at 700 MB
+        // doesn't restart the whole download.
+        Exception? lastError = null;
+        bool downloaded = false;
+        foreach (var url in new[] { OllamaInstallerPrimaryUrl, OllamaInstallerFallbackUrl })
         {
-            response.EnsureSuccessStatusCode();
-            long? total = response.Content.Headers.ContentLength;
-            await using var src = await response.Content.ReadAsStreamAsync();
-            await using var dst = File.Create(tempPath);
-
-            var buffer = new byte[81920];
-            long copied = 0;
-            int read;
-            int reportTick = 0;
-            while ((read = await src.ReadAsync(buffer)) > 0)
+            string host = new Uri(url).Host;
+            for (int attempt = 1; attempt <= OllamaMaxAttemptsPerUrl; attempt++)
             {
-                await dst.WriteAsync(buffer.AsMemory(0, read));
-                copied += read;
-                // 0.0..0.45 = download phase, 0.5+ = installer running phase.
-                // Throttle progress to ~every 64 reads (~5 MB) to avoid UI churn.
-                if (total is > 0 && (++reportTick & 0x3F) == 0)
+                try
                 {
-                    InstallProgress?.Invoke(serviceId, 0.45 * ((double)copied / total.Value));
+                    await DownloadOllamaInstaller(serviceId, url, tempPath);
+                    downloaded = true;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                    InstallLog?.Invoke(serviceId,
+                        $"Download attempt {attempt}/{OllamaMaxAttemptsPerUrl} from {host} failed: {ex.Message}");
+                    if (attempt < OllamaMaxAttemptsPerUrl)
+                        await Task.Delay(TimeSpan.FromSeconds(2));
                 }
             }
+            if (downloaded) break;
+            if (url == OllamaInstallerPrimaryUrl)
+                InstallLog?.Invoke(serviceId, $"Falling back to GitHub Releases ({OllamaInstallerFallbackUrl})");
+        }
+        if (!downloaded)
+        {
+            // Surface a useful error and the manual-install URL — gives the
+            // user a path forward instead of a stuck progress bar.
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { /* best-effort */ }
+            throw new InvalidOperationException(
+                $"Could not download OllamaSetup.exe from ollama.com or GitHub after {OllamaMaxAttemptsPerUrl} attempts each. " +
+                $"Last error: {lastError?.Message ?? "(unknown)"}. " +
+                "Install manually from https://ollama.com/download then click Start.");
         }
 
         InstallProgress?.Invoke(serviceId, 0.5);
@@ -174,6 +202,95 @@ public class InstallerService : IDisposable
 
         InstallProgress?.Invoke(serviceId, 1.0);
         InstallLog?.Invoke(serviceId, "Ollama installation complete.");
+    }
+
+    private async Task DownloadOllamaInstaller(string serviceId, string url, string tempPath)
+    {
+        // If a substantial partial file is on disk from a prior attempt,
+        // resume rather than restart. Anything below the threshold is
+        // discarded — too risky to glue onto without a strong size signal.
+        long resumeFrom = 0;
+        if (File.Exists(tempPath))
+        {
+            long existing = new FileInfo(tempPath).Length;
+            if (existing >= OllamaResumeMinBytes)
+            {
+                resumeFrom = existing;
+                InstallLog?.Invoke(serviceId, $"Resuming from {existing / 1_048_576} MB");
+            }
+            else if (existing > 0)
+            {
+                File.Delete(tempPath);
+            }
+        }
+
+        // Timeout.InfiniteTimeSpan disables HttpClient's total-request
+        // timeout — we enforce idleness per-chunk via CancellationToken
+        // below, which is the right abstraction for a multi-hundred-MB
+        // download (a slow but progressing connection should not be killed).
+        using var httpClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        if (resumeFrom > 0)
+            req.Headers.Range = new RangeHeaderValue(resumeFrom, null);
+
+        using var response = await httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+
+        // If we asked for a Range and the server returned 200 instead of
+        // 206, it ignored our request — start over from byte 0 (otherwise
+        // we'd append the full file onto the end of the partial).
+        if (resumeFrom > 0 && response.StatusCode == HttpStatusCode.OK)
+        {
+            InstallLog?.Invoke(serviceId, "Server ignored Range header; restarting from 0");
+            File.Delete(tempPath);
+            resumeFrom = 0;
+        }
+        else
+        {
+            response.EnsureSuccessStatusCode();
+        }
+
+        // ContentLength on a 206 response is "remaining bytes", not total —
+        // add resumeFrom to derive the total for progress calculation.
+        long? remaining = response.Content.Headers.ContentLength;
+        long totalSize = remaining is > 0 ? remaining.Value + resumeFrom : 0;
+        await using var src = await response.Content.ReadAsStreamAsync();
+        await using var dst = new FileStream(
+            tempPath,
+            resumeFrom > 0 ? FileMode.Append : FileMode.Create,
+            FileAccess.Write);
+
+        var buffer = new byte[81920];
+        long copied = resumeFrom;
+        int reportTick = 0;
+        while (true)
+        {
+            // Per-read idle timeout: the CDN may keep the TCP socket alive
+            // while sending zero bytes. HttpClient.Timeout=InfiniteTimeSpan
+            // means our only escape from that scenario is this CTS.
+            using var idleCts = new CancellationTokenSource(OllamaIdleReadTimeout);
+            int read;
+            try
+            {
+                read = await src.ReadAsync(buffer.AsMemory(), idleCts.Token);
+            }
+            catch (OperationCanceledException) when (idleCts.IsCancellationRequested)
+            {
+                throw new IOException(
+                    $"Download stalled — no data received in {OllamaIdleReadTimeout.TotalSeconds:0}s " +
+                    $"(got {copied / 1_048_576} MB of " +
+                    $"{(totalSize > 0 ? (totalSize / 1_048_576).ToString() + " MB" : "unknown size")}).");
+            }
+            if (read == 0) break;
+
+            await dst.WriteAsync(buffer.AsMemory(0, read));
+            copied += read;
+            // 0.0..0.45 = download phase, 0.5+ = installer running phase.
+            // Throttle progress to ~every 64 reads (~5 MB) to avoid UI churn.
+            if (totalSize > 0 && (++reportTick & 0x3F) == 0)
+            {
+                InstallProgress?.Invoke(serviceId, 0.45 * ((double)copied / totalSize));
+            }
+        }
     }
 
     public async Task Uninstall(ServiceDefinition service, string installDir)

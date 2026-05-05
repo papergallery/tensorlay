@@ -1,15 +1,24 @@
 using System.Collections.Concurrent;
 using System.IO;
 using System.Net.Http;
+using System.Text.Json;
 using TensorLay.Models;
 
 namespace TensorLay.Services;
 
 public class ModelDownloader : IDisposable
 {
-    private static readonly string[] ModelExtensions = { "*.safetensors", "*.ckpt", "*.gguf" };
+    // .pth covers ESRGAN/upscalers (e.g. 4x-UltraSharp), .bin for some
+    // CLIP/embedding files, plus the SD checkpoint formats and gguf for
+    // quantized LLM weights. Keeping the list in one place so adding a
+    // new format is a one-line change.
+    private static readonly string[] ModelExtensions = { "*.safetensors", "*.ckpt", "*.gguf", "*.pth", "*.bin" };
 
     private readonly HttpClient _httpClient = new();
+    // Separate, short-timeout client for Ollama /api/tags polling. Default
+    // HttpClient.Timeout (100s) would freeze the Models tab if Ollama is
+    // unreachable — 2s is plenty for a localhost call.
+    private readonly HttpClient _ollamaApiClient = new() { Timeout = TimeSpan.FromSeconds(2) };
     private readonly ConcurrentDictionary<string, DownloadTask> _activeTasks = new();
     private readonly SettingsService _settingsService;
     private bool _disposed;
@@ -129,12 +138,26 @@ public class ModelDownloader : IDisposable
 
     public List<ModelInfo> GetModelsForService(ServiceDefinition service, string installDir)
     {
+        // Ollama doesn't lay models out as files we can scan — they're
+        // SHA-named blobs in %USERPROFILE%\.ollama\models\blobs\ keyed by
+        // a manifest. Use HTTP /api/tags via GetOllamaModelsAsync instead.
+        // Returning empty here means the sync UI path (legacy) shows
+        // nothing for Ollama; ServiceViewModel.RefreshModels has the
+        // async branch that actually populates the list.
         if (string.IsNullOrEmpty(service.ModelsSubfolder))
             return new();
 
+        // Prefer ModelsScanRoot when set (parent dir holding multiple
+        // model-type subfolders, e.g. ComfyUI's "models" → checkpoints/,
+        // loras/, vae/, …). Fall back to ModelsSubfolder so services that
+        // keep a flat layout still work without a registry change.
+        string scanRel = string.IsNullOrEmpty(service.ModelsScanRoot)
+            ? service.ModelsSubfolder
+            : service.ModelsScanRoot;
+
         string modelsDir = string.IsNullOrEmpty(service.RelativeInstallPath)
-            ? Path.Combine(installDir, service.ModelsSubfolder)
-            : Path.Combine(installDir, service.RelativeInstallPath, service.ModelsSubfolder);
+            ? Path.Combine(installDir, scanRel)
+            : Path.Combine(installDir, service.RelativeInstallPath, scanRel);
 
         if (!Directory.Exists(modelsDir))
             return new();
@@ -154,6 +177,49 @@ public class ModelDownloader : IDisposable
         return files;
     }
 
+    // Ollama-specific model listing: hits the local API instead of
+    // scanning the filesystem. Returns empty on any failure (Ollama not
+    // running, timeout, parse error) — caller should treat that as "no
+    // models known" rather than escalate.
+    public async Task<List<ModelInfo>> GetOllamaModelsAsync(int port = 11434)
+    {
+        try
+        {
+            using var resp = await _ollamaApiClient.GetAsync($"http://127.0.0.1:{port}/api/tags").ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode) return new();
+            string json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+            using var doc = JsonDocument.Parse(json);
+            var result = new List<ModelInfo>();
+            if (!doc.RootElement.TryGetProperty("models", out var models)) return result;
+            foreach (var m in models.EnumerateArray())
+            {
+                string name = m.TryGetProperty("name", out var nameProp)
+                    ? nameProp.GetString() ?? "?"
+                    : "?";
+                long size = m.TryGetProperty("size", out var sizeProp) && sizeProp.ValueKind == JsonValueKind.Number
+                    ? sizeProp.GetInt64()
+                    : 0;
+                result.Add(new ModelInfo
+                {
+                    ServiceId = "ollama",
+                    FileName = name,
+                    // FullPath empty on purpose: Ollama models aren't a
+                    // single file at a fixed path — DeleteModel falls
+                    // back to a no-op for Ollama until we wire `ollama
+                    // rm` / DELETE /api/delete (TODO v0.9.6+).
+                    FullPath = "",
+                    SizeBytes = size,
+                });
+            }
+            return result;
+        }
+        catch
+        {
+            return new();
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -162,5 +228,6 @@ public class ModelDownloader : IDisposable
         foreach (var task in _activeTasks.Values)
             task.CancellationTokenSource.Cancel();
         _httpClient.Dispose();
+        _ollamaApiClient.Dispose();
     }
 }

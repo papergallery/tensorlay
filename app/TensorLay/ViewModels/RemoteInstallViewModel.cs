@@ -23,6 +23,15 @@ public partial class RemoteInstallViewModel : ViewModelBase
     private readonly RemoteTask _task;
     private DownloadTask? _downloadTask;
 
+    // Whole-percent progress already POSTed to the relay. Init to -1 so the
+    // very first event (likely 0%) actually fires. The OnDownloadProgress
+    // handler is invoked on every byte chunk by ModelDownloader, and prior
+    // to this dedup we were posting many duplicate "downloading" updates
+    // per percent — relay rejects same-state transitions with 400, leading
+    // to fd exhaustion server-side (see v0.9.1 punch list bug #2).
+    private int _lastPostedPercent = -1;
+    private bool _stopPostingProgress;
+
     public RemoteInstallViewModel(RemoteTaskService remoteTaskService, SettingsService settingsService, RemoteTask task)
     {
         _remoteTaskService = remoteTaskService;
@@ -130,11 +139,25 @@ public partial class RemoteInstallViewModel : ViewModelBase
                 ? $"{t.BytesDownloaded / 1_048_576} / {t.TotalBytes / 1_048_576} MB"
                 : $"{t.BytesDownloaded / 1_048_576} MB";
         });
-        // Throttled relay update — only on whole-percent changes to keep
-        // the relay log readable. Fire-and-forget is fine; if the post
-        // fails the next progress event retries naturally.
-        if ((int)t.ProgressPercent % 5 == 0)
-            _ = _remoteTaskService.PostStatusAsync(_task.Id, "downloading", t.ProgressPercent, null);
+
+        // Throttled relay update. ModelDownloader fires this on every byte
+        // chunk read; we only POST when the whole-percent actually advances,
+        // capping the chatter at ~100 posts per download. If the relay has
+        // marked this task permanent (4xx earlier — terminal state, illegal
+        // transition, etc.) drop further progress posts entirely.
+        if (_stopPostingProgress) return;
+        int pct = (int)t.ProgressPercent;
+        if (pct == _lastPostedPercent) return;
+        _lastPostedPercent = pct;
+
+        _ = PostProgressAsync(t.ProgressPercent);
+    }
+
+    private async Task PostProgressAsync(double pct)
+    {
+        var result = await _remoteTaskService.PostStatusWithResultAsync(
+            _task.Id, "downloading", pct, null).ConfigureAwait(false);
+        if (result == PostResult.Permanent) _stopPostingProgress = true;
     }
 
     private async void OnDownloadCompleted(DownloadTask t)

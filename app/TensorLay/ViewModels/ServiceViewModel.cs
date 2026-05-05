@@ -323,10 +323,30 @@ public partial class ServiceViewModel : ViewModelBase
 
     public void RefreshModels()
     {
+        // Ollama models live behind its HTTP API, not in our ModelsSubfolder.
+        // Fire an async refresh and bail; the populated list is marshaled
+        // back to the UI thread when the API call returns.
+        if (Definition.Id == "ollama")
+        {
+            _ = RefreshOllamaModelsAsync();
+            return;
+        }
+
         var list = _modelDownloader.GetModelsForService(Definition, _settingsService.Load().InstallDirectory);
         Models.Clear();
         foreach (var m in list)
             Models.Add(m);
+    }
+
+    private async Task RefreshOllamaModelsAsync()
+    {
+        var list = await _modelDownloader.GetOllamaModelsAsync(Definition.Port).ConfigureAwait(false);
+        RunOnUI(() =>
+        {
+            Models.Clear();
+            foreach (var m in list)
+                Models.Add(m);
+        });
     }
 
     partial void OnStateChanged(ServiceState value)

@@ -30,4 +30,14 @@ public class ServiceDefinition
     // unpinned, so plain pip resolves to the CPU wheel and Forge then crashes
     // at start with "Torch not compiled with CUDA enabled".
     public List<string> PreInstallCommands { get; init; } = new();
+
+    // Subdirectory (relative to RelativeInstallPath) that the Models tab
+    // scans for installed model files. Defaults to ModelsSubfolder when
+    // empty, which is correct for services that keep all models in one
+    // flat folder. Override to a parent directory for services like
+    // ComfyUI/sd-forge that split models across siblings of
+    // ModelsSubfolder (LoRA, VAE, upscalers, ControlNet, …) — e.g.
+    // ModelsSubfolder="models/checkpoints" (where new downloads land)
+    // and ModelsScanRoot="models" (where the Models tab walks).
+    public string ModelsScanRoot { get; init; } = "";
 }

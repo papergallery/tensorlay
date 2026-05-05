@@ -46,6 +46,14 @@ public class RemoteTask
     [JsonPropertyName("expires_at")]
     public DateTime ExpiresAt { get; set; }
 
+    // Optional routing hint shipped by relay v1.3.3+ on /api/tasks/install-model.
+    // When non-null, downloads land in <comfy_root>/models/<TargetSubdir>/<filename>
+    // (e.g. "loras", "vae", "insightface/models/antelopev2") instead of the
+    // legacy "models/checkpoints/" default. Sanitized again on the desktop side
+    // before use — see ModelDownloader.SanitizeTargetSubdir.
+    [JsonPropertyName("target_subdir")]
+    public string? TargetSubdir { get; set; }
+
     // Populated by RemoteTaskService after a successful HEAD preflight; not
     // serialized back to the relay. When non-null this is the truth-source
     // for the size shown in the approval modal.

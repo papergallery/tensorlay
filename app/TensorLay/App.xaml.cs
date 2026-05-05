@@ -2,6 +2,7 @@ using System.IO;
 using System.IO.Pipes;
 using System.Linq;
 using System.Windows;
+using System.Windows.Threading;
 using TensorLay.Services;
 using TensorLay.ViewModels;
 using TensorLay.Views;
@@ -16,6 +17,18 @@ public partial class App : Application
     private Mutex? _singleInstanceMutex;
     private CancellationTokenSource? _pipeCts;
 
+    // Crash logging to %APPDATA%\TensorLay\crash.log so users can hand us
+    // a stack trace after a silent termination — added in 0.9.5 after a
+    // user reported "the app vanishes after model downloads, no logs".
+    // Three sources: AppDomain (truly fatal native/CLR), Dispatcher (UI
+    // thread async-void handlers — most common), TaskScheduler (unobserved
+    // Task exceptions that GC eventually surfaces).
+    private static readonly object _crashLogLock = new();
+    private static string CrashLogPath =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "TensorLay", "crash.log");
+
     private ProcessManager? _processManager;
     private HealthCheckService? _healthCheckService;
     private InstallerService? _installerService;
@@ -28,6 +41,39 @@ public partial class App : Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        // Wire up crash logging FIRST — before any other code runs, so
+        // even an exception during service-construction is captured. The
+        // three sinks cover: AppDomain (CLR-level), Dispatcher (WPF UI
+        // thread, the common one for async-void handlers), TaskScheduler
+        // (unobserved Task exceptions that surface during GC).
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+            LogCrash("AppDomain.UnhandledException",
+                args.ExceptionObject as Exception, fatal: args.IsTerminating);
+
+        DispatcherUnhandledException += (_, args) =>
+        {
+            LogCrash("Dispatcher.UnhandledException", args.Exception, fatal: false);
+            // Mark as handled so WPF doesn't tear the app down — the user
+            // can keep working, and we've already captured the trace.
+            args.Handled = true;
+            try
+            {
+                MessageBox.Show(
+                    "An error occurred and was logged to:\n" + CrashLogPath +
+                    "\n\nDetails:\n" + args.Exception.Message,
+                    "TensorLay — error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+            catch { /* dispatcher reentrancy — give up gracefully */ }
+        };
+
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            LogCrash("TaskScheduler.UnobservedTaskException", args.Exception, fatal: false);
+            args.SetObserved();
+        };
+
         // OnStartup is async void — without this top-level catch, any
         // exception between Show() and the update block crashes the app
         // with no diagnostic. Keep the body wrapped so we can at least
@@ -38,17 +84,42 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[startup] fatal: {ex}");
+            LogCrash("StartupAsync", ex, fatal: true);
             try
             {
                 MessageBox.Show(
-                    $"TensorLay failed to start:\n\n{ex.Message}",
+                    $"TensorLay failed to start:\n\n{ex.Message}\n\nLog: {CrashLogPath}",
                     "TensorLay",
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
             }
             catch { /* dispatcher may already be down */ }
             Shutdown(1);
+        }
+    }
+
+    private static void LogCrash(string source, Exception? ex, bool fatal)
+    {
+        if (ex is null) return;
+        try
+        {
+            string dir = Path.GetDirectoryName(CrashLogPath)!;
+            Directory.CreateDirectory(dir);
+            // Lock so concurrent fires (Dispatcher + TaskScheduler racing
+            // on the same root cause) produce a clean append, not a
+            // shredded interleave.
+            lock (_crashLogLock)
+            {
+                using var sw = new StreamWriter(CrashLogPath, append: true);
+                sw.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {source}{(fatal ? " [FATAL]" : "")}");
+                sw.WriteLine(ex.ToString());
+                sw.WriteLine(new string('-', 80));
+            }
+        }
+        catch
+        {
+            // Logging itself failed — nothing useful to do (we'd just
+            // recurse into the same handler). Swallow.
         }
     }
 

@@ -14,7 +14,7 @@
     <AssemblyName>GpuHub</AssemblyName>
     <RootNamespace>TensorLay</RootNamespace>
     <ApplicationIcon>Resources\Icons\app.ico</ApplicationIcon>
-    <Version>0.9.0</Version>
+    <Version>0.9.7</Version>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>

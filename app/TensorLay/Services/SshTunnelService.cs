@@ -60,7 +60,10 @@ public class SshTunnelService : IDisposable
                 var ports = portsProvider();
                 foreach (int port in ports)
                 {
-                    var forwardedPort = new ForwardedPortRemote((uint)port, "127.0.0.1", (uint)port);
+                    // Explicit "127.0.0.1" boundHost — relay's authorized_keys
+                    // pins permitlisten="127.0.0.1:<port>"; the 3-arg overload
+                    // sends bind_address="" and sshd refuses on strict match.
+                    var forwardedPort = new ForwardedPortRemote("127.0.0.1", (uint)port, "127.0.0.1", (uint)port);
                     _client.AddForwardedPort(forwardedPort);
                     forwardedPort.Start();
                     _ports.Add(forwardedPort);
