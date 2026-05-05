@@ -15,6 +15,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import sqlite3
 import sys
@@ -40,7 +41,7 @@ except ImportError:
 
 # ── Constants ─────────────────────────────────────────────────────────────
 
-VERSION = "1.3.0"
+VERSION = "1.3.3"
 DATA_DIR = Path("/opt/tensorlay-relay")
 PAIRING_CODE_FILE = DATA_DIR / "pairing_code"
 SERVICE_TOKEN_FILE = DATA_DIR / "service_token"
@@ -81,20 +82,23 @@ DESKTOP_TRANSITIONS = {
 
 # Service definitions — kept in sync with desktop ServiceRegistry.cs.
 # `port` is the remote-forward port we permit on authorized_keys.
+# alltalk/musicgen/triposr removed in v0.9.2 alongside their broken installers
+# in the desktop registry — see ServiceRegistry.cs for the why.
 SERVICES = [
     {"id": "sd-forge", "name": "SD Forge",    "port": 7860,  "category": "image", "health": "/"},
     {"id": "comfyui",  "name": "ComfyUI",     "port": 8188,  "category": "image", "health": "/"},
     {"id": "ollama",   "name": "Ollama",      "port": 11434, "category": "text",  "health": "/api/tags"},
-    {"id": "alltalk",  "name": "AllTalk TTS", "port": 7851,  "category": "audio", "health": "/"},
-    {"id": "musicgen", "name": "MusicGen",    "port": 7861,  "category": "audio", "health": "/"},
-    {"id": "triposr",  "name": "TripoSR",     "port": 7862,  "category": "3d",    "health": "/"},
 ]
 
-# authorized_keys options for the paired client. `restrict` disables every
-# capability; we then re-enable only remote-port-forwards (permitlisten) for
-# the specific 127.0.0.1:<port> bindings the desktop app needs. No shell, no
-# exec, no agent/X11/pty.
-PERMIT_OPTIONS = "restrict," + ",".join(
+# authorized_keys options for the paired client. We list the disable flags
+# explicitly (instead of `restrict`) because OpenSSH 9.6 on Ubuntu does not
+# let `permitlisten` override the `no-port-forwarding` flag that `restrict`
+# implies — sshd refuses with "Server has disabled port forwarding" before
+# pattern matching runs. Skipping `no-port-forwarding` and relying on the
+# permitlisten white-list (which alone restricts -R to the listed ports)
+# achieves the same security posture: no shell, no exec, no agent/X11/pty,
+# and remote-forward only on the AI service ports.
+PERMIT_OPTIONS = "no-agent-forwarding,no-pty,no-user-rc,no-X11-forwarding," + ",".join(
     f'permitlisten="127.0.0.1:{s["port"]}"' for s in SERVICES
 )
 
@@ -198,6 +202,11 @@ class InstallModelRequest(BaseModel):
     size_mb: Optional[float] = None
     sha256: Optional[str] = Field(default=None, max_length=128)
     reason: Optional[str] = Field(default=None, max_length=500)
+    # v1.3.3 — optional ComfyUI models subfolder ('loras', 'vae', 'pulid',
+    # 'insightface/models/antelopev2', etc). When None the desktop falls back
+    # to its legacy default of models/checkpoints/. Strict validation lives
+    # in the install-model endpoint (see _validate_target_subdir).
+    target_subdir: Optional[str] = Field(default=None, max_length=128)
 
 
 class TaskStatusUpdate(BaseModel):
@@ -445,6 +454,13 @@ def _init_db() -> None:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS tasks_state_idx ON tasks(state)")
         conn.execute("CREATE INDEX IF NOT EXISTS tasks_expires_idx ON tasks(expires_at)")
+        # v1.3.3 — in-place migration for the optional ComfyUI subfolder field.
+        # SQLite has no IF NOT EXISTS for ADD COLUMN, so we swallow the
+        # "duplicate column name" OperationalError on already-migrated DBs.
+        try:
+            conn.execute("ALTER TABLE tasks ADD COLUMN target_subdir TEXT")
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
 
 
@@ -481,6 +497,9 @@ def _row_to_task(row: sqlite3.Row, *, include_internal: bool = False) -> dict:
         "state": row["state"],
         "created_at": _iso(row["created_at"]),
         "expires_at": _iso(row["expires_at"]),
+        # v1.3.3 — guarded read because rows inserted before the ALTER won't
+        # have the column key in the Row mapping on some sqlite3 builds.
+        "target_subdir": row["target_subdir"] if "target_subdir" in row.keys() else None,
     }
     if include_internal:
         out["progress_pct"] = row["progress_pct"]
@@ -594,19 +613,48 @@ def task_install_model(
     if body.size_mb is not None and body.size_mb <= 0:
         raise HTTPException(status_code=400, detail="size_mb must be positive")
 
+    target_subdir: Optional[str] = None
+    if body.target_subdir is not None:
+        candidate = body.target_subdir.strip()
+        # Strict allowlist — this string is concatenated into a filesystem
+        # path on the desktop side, so we reject anything that could escape
+        # <comfy_root>/models/ or do platform-specific weirdness (drive
+        # letters, backslashes, NUL). Empty after strip is also a reject.
+        bad = False
+        reason = ""
+        if not candidate:
+            bad, reason = True, "empty"
+        elif candidate.startswith("/") or candidate.endswith("/"):
+            bad, reason = True, "leading or trailing slash"
+        elif not re.fullmatch(r"[A-Za-z0-9_/-]+", candidate):
+            bad, reason = True, "characters outside [A-Za-z0-9_/-]"
+        else:
+            segments = candidate.split("/")
+            if len(segments) > 4:
+                bad, reason = True, "more than 4 path segments"
+            else:
+                for seg in segments:
+                    if not seg or seg == ".." or seg.startswith("."):
+                        bad, reason = True, f"bad segment {seg!r}"
+                        break
+        if bad:
+            log.warning("install-model: rejected target_subdir=%r (%s)", body.target_subdir, reason)
+            raise HTTPException(status_code=400, detail=f"Invalid target_subdir: {reason}")
+        target_subdir = candidate
+
     task_id = str(uuid.uuid4())
     now = time.time()
     expires = now + float(CONFIG["tasks"]["ttl_seconds"])
     with _db() as conn:
         conn.execute(
             "INSERT INTO tasks (id, created_at, updated_at, state, service_id, url, "
-            "display_name, size_mb, sha256, reason, agent_label, expires_at) "
-            "VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)",
+            "display_name, size_mb, sha256, reason, agent_label, expires_at, target_subdir) "
+            "VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id, now, now,
                 body.service_id, body.url, body.display_name,
                 body.size_mb, body.sha256, body.reason,
-                CONFIG["agent"]["label"], expires,
+                CONFIG["agent"]["label"], expires, target_subdir,
             ),
         )
     log.info("install-model: created task=%s service=%s name=%r", task_id, body.service_id, body.display_name)
@@ -655,6 +703,17 @@ def task_post_status(
         current = row[0]
         if current in TERMINAL_STATES:
             raise HTTPException(status_code=409, detail=f"Task already {current}")
+        # Same-state progress update — accept as no-op state change so older
+        # desktop clients (pre-0.9.7) that re-send state="downloading" on
+        # every progress event don't earn a 400 storm. Only progress_pct is
+        # updated; state stays as-is. Defense in depth — modern clients
+        # already dedup client-side.
+        if body.state == current == "downloading":
+            conn.execute(
+                "UPDATE tasks SET progress_pct = ?, updated_at = ? WHERE id = ?",
+                (body.progress_pct, now, task_id),
+            )
+            return {"ok": True}
         allowed_next = DESKTOP_TRANSITIONS.get(current, set())
         if body.state not in allowed_next:
             raise HTTPException(
