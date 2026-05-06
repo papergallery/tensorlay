@@ -117,21 +117,73 @@ public class InstallerService : IDisposable
                     }
                 }
 
+                // Per-service venv (when enabled in the registry). Build it
+                // *with* the version-pinned launcher invocation, then route
+                // every subsequent pip call through the venv's python.exe.
+                // Once routed, the leading "-3.X " selector is meaningless
+                // (and harmful — venv python doesn't accept it), so the
+                // helper below strips it from the command string.
+                string pyExe = service.PythonExecutable;
+                string pyArgsPrefix = service.PythonInterpreterArgs;
+                if (service.UsesVenv)
+                {
+                    string venvPath = Path.Combine(targetPath, ".venv");
+                    string venvPython = Path.Combine(venvPath, "Scripts", "python.exe");
+                    if (!File.Exists(venvPython))
+                    {
+                        InstallLog?.Invoke(service.Id, $"Creating isolated venv at {venvPath}...");
+                        string venvArgs = string.IsNullOrEmpty(pyArgsPrefix)
+                            ? $"-m venv \"{venvPath}\""
+                            : $"{pyArgsPrefix} -m venv \"{venvPath}\"";
+                        await RunProcess(pyExe, venvArgs, targetPath, service.Id);
+                    }
+                    else
+                    {
+                        InstallLog?.Invoke(service.Id, "Reusing existing venv.");
+                    }
+                    pyExe = venvPython;
+                    pyArgsPrefix = ""; // venv python ignores -3.X selectors
+                }
+
                 // PreInstallCommands run before requirements*.txt so a service
                 // can pin specific wheels (e.g. CUDA torch from a custom index)
                 // that requirements_versions.txt would otherwise satisfy with
                 // the wrong build.
-                foreach (var preCmd in service.PreInstallCommands)
+                //
+                // RTX 50 / Blackwell guard: SD Forge's PreInstallCommand pins
+                // torch==2.3.1+cu121, which has no Blackwell support (cu121
+                // tops out at sm_90). The install will succeed but the
+                // service runs CPU-only — the symptom is "works but unusably
+                // slow." Surface that explicitly so the user isn't left
+                // diagnosing it from a perf cliff. We don't auto-bump torch
+                // because Forge upstream is pinned to 2.3.1 and a blind
+                // version swap risks breaking image generation in subtler
+                // ways (model loaders, ControlNet patches, etc.).
+                bool hasCu121Pin = service.PreInstallCommands.Any(c => c.Contains("cu121"));
+                if (hasCu121Pin)
                 {
-                    InstallLog?.Invoke(service.Id, $"Pre-install: {service.PythonExecutable} {preCmd}");
-                    await RunProcess(service.PythonExecutable, preCmd, targetPath, service.Id);
+                    var gen = await GpuMonitor.DetectGenerationAsync().ConfigureAwait(false);
+                    if (gen == GpuGeneration.Rtx50)
+                    {
+                        InstallLog?.Invoke(service.Id,
+                            "WARNING: RTX 50-series (Blackwell) detected. This service pins torch 2.3.1+cu121, " +
+                            "which lacks Blackwell support — it will install but likely fall back to CPU. " +
+                            "Consider ComfyUI (cu128) instead until Forge upstream bumps torch.");
+                    }
+                }
+
+                foreach (var rawCmd in service.PreInstallCommands)
+                {
+                    string preCmd = service.UsesVenv ? StripVersionSelector(rawCmd) : rawCmd;
+                    InstallLog?.Invoke(service.Id, $"Pre-install: {pyExe} {preCmd}");
+                    await RunProcess(pyExe, preCmd, targetPath, service.Id);
                 }
 
                 InstallLog?.Invoke(service.Id, $"Installing pip requirements ({requirementsFile})...");
-                string pipArgs = string.IsNullOrEmpty(service.PythonInterpreterArgs)
+                string pipArgs = string.IsNullOrEmpty(pyArgsPrefix)
                     ? $"-m pip install -r {requirementsFile}"
-                    : $"{service.PythonInterpreterArgs} -m pip install -r {requirementsFile}";
-                await RunProcess(service.PythonExecutable, pipArgs, targetPath, service.Id);
+                    : $"{pyArgsPrefix} -m pip install -r {requirementsFile}";
+                await RunProcess(pyExe, pipArgs, targetPath, service.Id);
             }
 
             InstallProgress?.Invoke(service.Id, 1.0);
@@ -352,6 +404,16 @@ public class InstallerService : IDisposable
             : Path.Combine(installDir, service.RelativeInstallPath);
 
         return Directory.Exists(targetPath);
+    }
+
+    // Strip a leading py-launcher version selector ("-3.10 ", "-3.12 ") from
+    // a command-args string. Used when re-routing a service's pip command
+    // through a venv python — the selector is invalid for a regular python
+    // invocation and python.exe would treat "-3.10" as an unknown option.
+    internal static string StripVersionSelector(string args)
+    {
+        if (string.IsNullOrEmpty(args)) return args;
+        return System.Text.RegularExpressions.Regex.Replace(args, @"^-3\.\d+\s+", "");
     }
 
     private static void EnsureOnPath(string exe, string friendlyName, string installUrl)

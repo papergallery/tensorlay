@@ -310,8 +310,18 @@ public partial class ServiceViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void DeleteModel(ModelInfo model)
+    private async Task DeleteModel(ModelInfo model)
     {
+        // Ollama models live as SHA-named blobs behind its HTTP API, not at
+        // a path we can File.Delete. Route through /api/delete; only remove
+        // from the UI list if the daemon confirms 2xx.
+        if (Definition.Id == "ollama")
+        {
+            bool ok = await _modelDownloader.DeleteOllamaModelAsync(model.FileName, Definition.Port).ConfigureAwait(true);
+            if (ok) Models.Remove(model);
+            return;
+        }
+
         try
         {
             if (File.Exists(model.FullPath))

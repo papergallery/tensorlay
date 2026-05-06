@@ -31,6 +31,19 @@ public class ServiceDefinition
     // at start with "Torch not compiled with CUDA enabled".
     public List<string> PreInstallCommands { get; init; } = new();
 
+    // When true, install creates a per-service venv at <targetPath>/.venv
+    // using PythonExecutable + PythonInterpreterArgs, and all subsequent
+    // pip + start commands route through that venv's python.exe instead of
+    // the system py launcher. Isolates dependency conflicts between
+    // services — e.g. Forge pins torch 2.3.1 while ComfyUI wants torch
+    // 2.7+, which can't coexist on the same system Python install.
+    //
+    // Backward compat: ProcessManager.StartService and InstallerService
+    // detect a missing .venv on already-installed services and fall back
+    // to the legacy py-launcher path with a warning, so 0.9.8-era installs
+    // keep working — migration happens on next Uninstall+Install.
+    public bool UsesVenv { get; init; }
+
     // Subdirectory (relative to RelativeInstallPath) that the Models tab
     // scans for installed model files. Defaults to ModelsSubfolder when
     // empty, which is correct for services that keep all models in one

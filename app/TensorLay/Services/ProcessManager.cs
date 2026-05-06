@@ -42,10 +42,35 @@ public class ProcessManager : IDisposable
             ? installDir
             : Path.Combine(installDir, service.RelativeInstallPath);
 
+        // Route through the per-service venv when one was provisioned at
+        // install time. The presence of .venv/Scripts/python.exe is the
+        // ground-truth signal — UsesVenv=true on a 0.9.8-era install that
+        // pre-dates venv isolation has no .venv on disk, so we transparently
+        // fall back to the legacy py-launcher path with a one-line nudge.
+        // The selector-stripped args matter: the launcher form "-3.10 main.py"
+        // would be rejected by venv python as an unknown flag.
+        string startExe = service.StartExecutable;
+        string startArgs = service.StartArguments;
+        if (service.UsesVenv)
+        {
+            string venvPython = Path.Combine(workingDir, ".venv", "Scripts", "python.exe");
+            if (File.Exists(venvPython))
+            {
+                startExe = venvPython;
+                startArgs = StripVersionSelector(startArgs);
+            }
+            else
+            {
+                OutputReceived?.Invoke(service.Id,
+                    "Note: this install pre-dates venv isolation. Uninstall + reinstall " +
+                    "to migrate dependencies into <install>/.venv/. Falling back to system Python.");
+            }
+        }
+
         var psi = new ProcessStartInfo
         {
-            FileName = service.StartExecutable,
-            Arguments = service.StartArguments,
+            FileName = startExe,
+            Arguments = startArgs,
             WorkingDirectory = workingDir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -121,6 +146,15 @@ public class ProcessManager : IDisposable
     {
         try { return !p.HasExited; }
         catch { return false; }
+    }
+
+    // Mirror of InstallerService.StripVersionSelector — kept private here to
+    // avoid a cross-class dependency for one regex. If a third caller
+    // appears, hoist to a shared helper.
+    private static string StripVersionSelector(string args)
+    {
+        if (string.IsNullOrEmpty(args)) return args;
+        return System.Text.RegularExpressions.Regex.Replace(args, @"^-3\.\d+\s+", "");
     }
 
     // True iff something on the local machine is already listening on `port`.

@@ -4,6 +4,18 @@ using TensorLay.Models;
 
 namespace TensorLay.Services;
 
+// Coarse generation buckets, enough to drive CUDA-wheel decisions. We don't
+// distinguish individual SKUs (5070 vs 5090) because the toolkit/driver
+// constraints are per-architecture, not per-SKU.
+public enum GpuGeneration
+{
+    Unknown,
+    Pre30,    // GTX 10/16 series, RTX 20 series — sm_75 and below
+    Rtx30,    // Ampere, sm_86
+    Rtx40,    // Ada Lovelace, sm_89
+    Rtx50,    // Blackwell, sm_120 — needs CUDA 12.6+ / torch 2.6+
+}
+
 public class GpuMonitor : IDisposable
 {
     private readonly Timer _timer;
@@ -146,6 +158,75 @@ public class GpuMonitor : IDisposable
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GlobalMemoryStatusEx([In, Out] MEMORYSTATUSEX lpBuffer);
+
+    // One-shot generation detection for install-time decisions. Cheaper than
+    // waiting for the polling loop's first tick (caller often runs before
+    // the 3s timer has fired). Returns Unknown on any failure — callers
+    // should treat that as "skip the gen-specific tweak", not as an error.
+    public static async Task<GpuGeneration> DetectGenerationAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "nvidia-smi",
+                Arguments = "--query-gpu=name --format=csv,noheader",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var process = Process.Start(psi);
+            if (process is null) return GpuGeneration.Unknown;
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(3));
+            try
+            {
+                var readTask = process.StandardOutput.ReadToEndAsync(cts.Token);
+                await Task.WhenAll(readTask, process.WaitForExitAsync(cts.Token)).ConfigureAwait(false);
+                string name = (await readTask).Trim().Split('\n').FirstOrDefault()?.Trim() ?? "";
+                return ClassifyGeneration(name);
+            }
+            catch (OperationCanceledException)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return GpuGeneration.Unknown;
+            }
+        }
+        catch
+        {
+            return GpuGeneration.Unknown;
+        }
+    }
+
+    // Coarse name-based classification. nvidia-smi reports e.g. "NVIDIA
+    // GeForce RTX 4080" / "NVIDIA GeForce RTX 5090". We only need the
+    // architecture bucket, not the SKU — and we deliberately bias toward
+    // Unknown for ambiguous strings so the caller doesn't make a worse
+    // decision than skipping the optimization.
+    internal static GpuGeneration ClassifyGeneration(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return GpuGeneration.Unknown;
+        string n = name.ToUpperInvariant();
+
+        // Match the digit immediately after "RTX " — 50/40/30 series.
+        // Workstation cards (RTX A6000, RTX 6000 Ada, RTX PRO 6000 Blackwell)
+        // are intentionally not classified here — driver story differs and
+        // we'd rather skip the warning than misfire it on a Quadro.
+        var m = System.Text.RegularExpressions.Regex.Match(n, @"\bRTX\s+(\d{4})\b");
+        if (m.Success && int.TryParse(m.Groups[1].Value, out int model))
+        {
+            if (model >= 5000 && model < 6000) return GpuGeneration.Rtx50;
+            if (model >= 4000 && model < 5000) return GpuGeneration.Rtx40;
+            if (model >= 3000 && model < 4000) return GpuGeneration.Rtx30;
+            if (model >= 2000 && model < 3000) return GpuGeneration.Pre30;
+        }
+        if (System.Text.RegularExpressions.Regex.IsMatch(n, @"\bGTX\s+1\d{3}\b"))
+            return GpuGeneration.Pre30;
+
+        return GpuGeneration.Unknown;
+    }
 
     public void Dispose()
     {

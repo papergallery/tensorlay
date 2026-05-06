@@ -48,7 +48,8 @@ public static class ServiceRegistry
             // also models/Lora, models/VAE, models/ESRGAN — scan the whole
             // models/ tree so the Models tab reflects everything on disk.
             ModelsScanRoot = "models",
-            UseSystemInstaller = false
+            UseSystemInstaller = false,
+            UsesVenv = true
         },
         new ServiceDefinition
         {
@@ -85,7 +86,8 @@ public static class ServiceRegistry
             // embeddings/, etc. Scan the whole models/ tree so .pth
             // upscalers and .safetensors LoRAs show up in the Models tab.
             ModelsScanRoot = "models",
-            UseSystemInstaller = false
+            UseSystemInstaller = false,
+            UsesVenv = true
         },
         new ServiceDefinition
         {
