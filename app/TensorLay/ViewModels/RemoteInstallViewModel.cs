@@ -166,6 +166,7 @@ public partial class RemoteInstallViewModel : ViewModelBase
         _remoteTaskService.Downloader.DownloadProgressChanged -= OnDownloadProgress;
         _remoteTaskService.Downloader.DownloadCompleted -= OnDownloadCompleted;
 
+        string taskHandle = $"task:{_task.Id[..Math.Min(8, _task.Id.Length)]}";
         string finalState;
         string? errorMsg = null;
         switch (t.State)
@@ -173,13 +174,16 @@ public partial class RemoteInstallViewModel : ViewModelBase
             case DownloadState.Completed:
                 if (!string.IsNullOrEmpty(_task.Sha256))
                 {
+                    DownloadLog.Info(taskHandle, $"verifying sha256 against expected={_task.Sha256}");
                     if (!await VerifySha256(t.TargetPath, _task.Sha256!).ConfigureAwait(true))
                     {
                         try { File.Delete(t.TargetPath); } catch { /* best-effort */ }
                         finalState = "failed";
                         errorMsg = "SHA-256 checksum mismatch";
+                        DownloadLog.Error(taskHandle, "sha256 MISMATCH — file deleted");
                         break;
                     }
+                    DownloadLog.Info(taskHandle, "sha256 OK");
                 }
                 finalState = "completed";
                 break;
@@ -188,10 +192,16 @@ public partial class RemoteInstallViewModel : ViewModelBase
                 break;
             default:
                 finalState = "failed";
-                errorMsg = string.IsNullOrEmpty(t.ErrorMessage) ? "Download failed" : t.ErrorMessage;
+                // Surface the concrete underlying error rather than a generic
+                // "Download failed" — relay's tasks.error_msg now carries
+                // the actual reason (file missing at target, stalled stream,
+                // upstream HTTP code, etc.) so a post-mortem on a phantom-
+                // success report has something to read.
+                errorMsg = string.IsNullOrEmpty(t.ErrorMessage) ? "Download failed (no error_msg)" : t.ErrorMessage;
                 break;
         }
 
+        DownloadLog.Info(taskHandle, $"posting final state={finalState} error_msg={errorMsg ?? "<none>"}");
         await _remoteTaskService.PostStatusAsync(_task.Id, finalState, finalState == "completed" ? 100.0 : null, errorMsg).ConfigureAwait(true);
 
         RunOnUI(() =>

@@ -23,6 +23,11 @@ tasks:
   # After this they're hard-deleted. Lower it if you want less history.
   terminal_retention_seconds: 604800   # 7 days
 
+  # SlowAPI rate-limit string for POST /api/tasks/install-model. Keyed per
+  # agent token, so one agent's burst doesn't starve others. Bump for
+  # batch operations (e.g. seeding a fresh ComfyUI install with 20+ models).
+  install_rate_limit: "10/hour"
+
 allowlist:
   # Hostname-suffix allowlist for POST /api/tasks/install-model.
   # Suffix match means `cdn.huggingface.co` matches `huggingface.co`,

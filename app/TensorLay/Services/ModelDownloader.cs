@@ -36,7 +36,20 @@ public class ModelDownloader : IDisposable
     // so a 12 GB Flux model at 50 MB/s would abort around the 5 GB mark.
     // Disable the global timeout — hang detection is the cancellation token
     // plus the read-loop's natural EOF/exception handling.
-    private readonly HttpClient _httpClient = new() { Timeout = Timeout.InfiniteTimeSpan };
+    //
+    // AllowAutoRedirect=false on purpose: .NET's built-in redirect handler
+    // forwards the original request's Authorization header to the redirect
+    // target unconditionally. Civitai's `/api/download/models/...` issues
+    // a 302 to a presigned `civitai-delivery-worker-prod.s3...amazonaws.com`
+    // URL — sending our Civitai bearer to AWS S3 yielded a SignatureDoesNotMatch
+    // body that previous code happily streamed to disk as if it were a model.
+    // We follow redirects manually below in `FollowAndOpen`, dropping
+    // Authorization whenever the host changes.
+    private readonly HttpClient _httpClient = new(new HttpClientHandler { AllowAutoRedirect = false })
+    {
+        Timeout = Timeout.InfiniteTimeSpan
+    };
+    private const int MaxRedirects = 8;
     // Separate, short-timeout client for Ollama HTTP API calls (/api/tags
     // polling, /api/delete). Default HttpClient.Timeout (100s) would freeze
     // the Models tab if Ollama is unreachable — 2s is plenty for /api/tags.
@@ -111,6 +124,9 @@ public class ModelDownloader : IDisposable
     {
         task.State = DownloadState.Downloading;
         var userCt = task.CancellationTokenSource.Token;
+        string handle = ShortHandle(task);
+
+        DownloadLog.Info(handle, $"START url={task.Url} target={task.TargetPath} service={task.ServiceId}");
 
         try
         {
@@ -126,19 +142,18 @@ public class ModelDownloader : IDisposable
             {
                 long existing = new FileInfo(task.TargetPath).Length;
                 if (existing >= ResumeMinBytes)
+                {
                     resumeFrom = existing;
+                    DownloadLog.Info(handle, $"resuming from {existing} bytes");
+                }
                 else if (existing > 0)
+                {
+                    DownloadLog.Info(handle, $"discarding small partial ({existing} bytes < {ResumeMinBytes})");
                     File.Delete(task.TargetPath);
+                }
             }
 
-            using var req = new HttpRequestMessage(HttpMethod.Get, task.Url);
-            if (resumeFrom > 0)
-                req.Headers.Range = new RangeHeaderValue(resumeFrom, null);
-
-            using var response = await _httpClient.SendAsync(
-                req,
-                HttpCompletionOption.ResponseHeadersRead,
-                userCt).ConfigureAwait(false);
+            using var response = await FollowAndOpen(task.Url, resumeFrom, handle, userCt).ConfigureAwait(false);
 
             // 416 Range Not Satisfiable on resume usually means the partial
             // already equals (or exceeds) the full size — treat as a "we're
@@ -150,7 +165,7 @@ public class ModelDownloader : IDisposable
                 task.TotalBytes = resumeFrom;
                 task.BytesDownloaded = resumeFrom;
                 task.ProgressPercent = 100;
-                task.State = DownloadState.Completed;
+                FinalizeIfFileOk(task, handle);
                 return;
             }
 
@@ -159,6 +174,7 @@ public class ModelDownloader : IDisposable
             // file). Truncate and start over.
             if (resumeFrom > 0 && response.StatusCode == HttpStatusCode.OK)
             {
+                DownloadLog.Warn(handle, "server ignored Range header — truncating and restarting from 0");
                 File.Delete(task.TargetPath);
                 resumeFrom = 0;
             }
@@ -172,6 +188,7 @@ public class ModelDownloader : IDisposable
             long? remaining = response.Content.Headers.ContentLength;
             task.TotalBytes = remaining is > 0 ? remaining.Value + resumeFrom : 0;
             task.BytesDownloaded = resumeFrom;
+            DownloadLog.Info(handle, $"streaming: status={(int)response.StatusCode} total={task.TotalBytes} resumeFrom={resumeFrom}");
 
             await using var stream = await response.Content.ReadAsStreamAsync(userCt);
             await using var file = new FileStream(
@@ -211,22 +228,134 @@ public class ModelDownloader : IDisposable
                 DownloadProgressChanged?.Invoke(task);
             }
 
-            task.State = DownloadState.Completed;
-            task.ProgressPercent = 100;
+            // Flush the FileStream before we File.Exists/length-check the
+            // target — otherwise the buffer may not have hit disk yet and
+            // the guard below could fire false-negative on tiny files.
+            await file.FlushAsync(userCt).ConfigureAwait(false);
+            FinalizeIfFileOk(task, handle);
         }
         catch (OperationCanceledException)
         {
             task.State = DownloadState.Cancelled;
+            DownloadLog.Info(handle, "CANCELLED by user");
         }
         catch (Exception ex)
         {
             task.State = DownloadState.Failed;
             task.ErrorMessage = ex.Message;
+            DownloadLog.Error(handle, $"FAILED: {ex.GetType().Name}: {ex.Message}");
         }
         finally
         {
             _activeTasks.TryRemove(task.Url, out _);
             DownloadCompleted?.Invoke(task);
+        }
+    }
+
+    // Final guard before we tell the world this download succeeded:
+    // verify the bytes actually landed on disk. Without this, an empty 200
+    // body (zero-byte target file) or a target that vanished between the
+    // last write and now would be reported as `Completed` to the relay —
+    // the exact silent-success failure mode that hit Civitai installs in
+    // 2026-05-08. A failure here flips the task to Failed with a concrete
+    // error_msg so the relay sees the truth and the agent can retry.
+    private static void FinalizeIfFileOk(DownloadTask task, string handle)
+    {
+        try
+        {
+            if (!File.Exists(task.TargetPath))
+            {
+                task.State = DownloadState.Failed;
+                task.ErrorMessage = $"download finished but target file is missing: {task.TargetPath}";
+                DownloadLog.Error(handle, $"FAILED post-finalize: file missing at {task.TargetPath}");
+                return;
+            }
+            long size = new FileInfo(task.TargetPath).Length;
+            if (size <= 0)
+            {
+                task.State = DownloadState.Failed;
+                task.ErrorMessage = $"download finished but target file is empty: {task.TargetPath}";
+                DownloadLog.Error(handle, $"FAILED post-finalize: file empty at {task.TargetPath}");
+                return;
+            }
+            task.State = DownloadState.Completed;
+            task.ProgressPercent = 100;
+            DownloadLog.Info(handle, $"COMPLETED size={size} target={task.TargetPath}");
+        }
+        catch (Exception ex)
+        {
+            task.State = DownloadState.Failed;
+            task.ErrorMessage = $"finalize check failed: {ex.Message}";
+            DownloadLog.Error(handle, $"FAILED finalize check: {ex.Message}");
+        }
+    }
+
+    // Manual redirect follower. .NET's auto-redirect forwards the
+    // Authorization header unconditionally — Civitai's API URL redirects
+    // 302 → S3 presigned URL, and forwarding our Civitai bearer to S3
+    // earned an XML "InvalidArgument: Bearer" body that previous code
+    // streamed straight to disk. We strip Authorization on every cross-host
+    // hop. The initial Authorization header is currently never set by this
+    // client (download URLs are public CDN links), but the strip-on-hop
+    // logic future-proofs against any caller that adds one to a request.
+    private async Task<HttpResponseMessage> FollowAndOpen(
+        string startUrl, long resumeFrom, string handle, CancellationToken ct)
+    {
+        Uri current = new(startUrl);
+        // Set this if/when callers learn to attach a bearer. Today it's
+        // always null — the redirect-strip path is exercised only by the
+        // host-comparison logic below, which still does its job.
+        AuthenticationHeaderValue? auth = null;
+        for (int hop = 0; hop <= MaxRedirects; hop++)
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, current);
+            if (auth is not null) req.Headers.Authorization = auth;
+            // Range header rides every hop — the eventual final server is
+            // the one that has to honor the partial; CDN/redirect proxies
+            // just forward.
+            if (resumeFrom > 0) req.Headers.Range = new RangeHeaderValue(resumeFrom, null);
+
+            var response = await _httpClient.SendAsync(
+                req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+
+            int code = (int)response.StatusCode;
+            if (code is >= 300 and < 400 && response.Headers.Location is not null)
+            {
+                Uri next = response.Headers.Location.IsAbsoluteUri
+                    ? response.Headers.Location
+                    : new Uri(current, response.Headers.Location);
+                bool crossHost = !string.Equals(next.Host, current.Host, StringComparison.OrdinalIgnoreCase);
+                DownloadLog.Info(handle,
+                    $"redirect hop {hop}: {code} {current.Host} -> {next.Host}" +
+                    (crossHost ? " [cross-host: dropping Authorization]" : ""));
+                if (crossHost) auth = null;
+                response.Dispose();
+                current = next;
+                continue;
+            }
+
+            if (hop > 0)
+                DownloadLog.Info(handle, $"final response after {hop} redirect(s): status={code} host={current.Host}");
+            return response;
+        }
+        throw new HttpRequestException($"Too many redirects (>{MaxRedirects}) starting from {startUrl}");
+    }
+
+    // 8-char prefix of the URL-derived hash, just enough to correlate log
+    // lines for one task without exposing the full URL on every line. Falls
+    // back to a length-bounded slug if hashing somehow fails.
+    private static string ShortHandle(DownloadTask task)
+    {
+        try
+        {
+            using var sha = System.Security.Cryptography.SHA1.Create();
+            byte[] bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(task.Url));
+            return Convert.ToHexString(bytes, 0, 4).ToLowerInvariant();
+        }
+        catch
+        {
+            string fn = Path.GetFileName(task.Url);
+            return string.IsNullOrEmpty(fn) ? "task" : fn[..Math.Min(8, fn.Length)];
         }
     }
 

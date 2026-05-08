@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using TensorLay.Models;
 using TensorLay.ViewModels;
 
@@ -101,6 +102,18 @@ public partial class MainWindow : Window
     private void OnCloseClick(object sender, RoutedEventArgs e)
     {
         Application.Current.Shutdown();
+    }
+
+    // The ⋯ overflow button next to each service row drops its ContextMenu
+    // on a plain left-click. Without this WPF would only open the menu on
+    // right-click, which isn't discoverable.
+    private void OverflowButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.ContextMenu is not null)
+        {
+            btn.ContextMenu.PlacementTarget = btn;
+            btn.ContextMenu.IsOpen = true;
+        }
     }
 
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)

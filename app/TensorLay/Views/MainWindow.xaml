@@ -110,12 +110,27 @@
                                              ConverterParameter=NotInstalled}">
                             <TextBlock Text="Install" Foreground="#6B6B6B"/>
                         </Button>
-                        <Button Style="{StaticResource DangerButton}"
-                                Padding="10,5" FontSize="12" Margin="6,0,0,0"
-                                Command="{Binding UninstallCommand}"
+                        <!-- Uninstall demoted to overflow menu after the 2026-05-06
+                             misclick incident (~25 GB models lost via inline button).
+                             Stays available but no longer fat-fingerable. -->
+                        <Button Style="{StaticResource SecondaryButton}"
+                                Padding="8,5" FontSize="14" Margin="24,0,0,0"
+                                ToolTip="More actions"
+                                Click="OverflowButton_Click"
                                 Visibility="{Binding State, Converter={StaticResource StateToVisibility},
                                              ConverterParameter=Stopped}">
-                            <TextBlock Text="Uninstall" Foreground="#E74C3C"/>
+                            <TextBlock Text="⋯" Foreground="#6B6B6B"/>
+                            <Button.ContextMenu>
+                                <!-- ContextMenu lives in a separate visual tree
+                                     and does not inherit DataContext from the
+                                     button. Bind through PlacementTarget so the
+                                     ServiceViewModel's UninstallCommand is hit. -->
+                                <ContextMenu>
+                                    <MenuItem Header="Uninstall…"
+                                              Command="{Binding PlacementTarget.DataContext.UninstallCommand,
+                                                                RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                </ContextMenu>
+                            </Button.ContextMenu>
                         </Button>
                     </StackPanel>
                 </Grid>

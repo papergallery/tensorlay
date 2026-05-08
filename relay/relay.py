@@ -41,7 +41,7 @@ except ImportError:
 
 # ── Constants ─────────────────────────────────────────────────────────────
 
-VERSION = "1.3.4"
+VERSION = "1.3.5"
 DATA_DIR = Path("/opt/tensorlay-relay")
 PAIRING_CODE_FILE = DATA_DIR / "pairing_code"
 SERVICE_TOKEN_FILE = DATA_DIR / "service_token"
@@ -56,6 +56,7 @@ DEFAULT_TASK_TTL_SECONDS = 86400          # 24h before pending tasks auto-expire
 DEFAULT_TERMINAL_RETENTION_SECONDS = 7 * 86400  # keep finished tasks for 7d as audit trail
 DEFAULT_EXPIRE_INTERVAL_SECONDS = 300      # background sweep cadence
 DEFAULT_AGENT_LABEL = "VPS agent"
+DEFAULT_INSTALL_RATE_LIMIT = "10/hour"     # SlowAPI string for /api/tasks/install-model
 # Reaper-failure suppression. The desktop agent at startup posts
 # state="failed" with reason like "Desktop restarted before completion" for
 # any task it found mid-download. That's not a real failure — the task was
@@ -135,6 +136,7 @@ def _load_config() -> dict:
             "ttl_seconds": DEFAULT_TASK_TTL_SECONDS,
             "expire_check_interval": DEFAULT_EXPIRE_INTERVAL_SECONDS,
             "terminal_retention_seconds": DEFAULT_TERMINAL_RETENTION_SECONDS,
+            "install_rate_limit": DEFAULT_INSTALL_RATE_LIMIT,
         },
         "allowlist": {"hosts": list(DEFAULT_ALLOWLIST_HOSTS)},
         "agent": {"label": DEFAULT_AGENT_LABEL},
@@ -601,7 +603,7 @@ def services(_: None = Depends(_require_service_token)):
 
 
 @app.post("/api/tasks/install-model", status_code=202)
-@limiter.limit("10/hour", key_func=_agent_key)
+@limiter.limit(CONFIG["tasks"]["install_rate_limit"], key_func=_agent_key)
 def task_install_model(
     request: Request,
     body: InstallModelRequest,

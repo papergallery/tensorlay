@@ -345,7 +345,12 @@ public class InstallerService : IDisposable
         }
     }
 
-    public async Task Uninstall(ServiceDefinition service, string installDir)
+    // Back-compat overload for the install-failure cleanup path in
+    // ServiceViewModel.Install — that flow always wants a full wipe.
+    public Task Uninstall(ServiceDefinition service, string installDir)
+        => Uninstall(service, installDir, keepModels: false);
+
+    public async Task Uninstall(ServiceDefinition service, string installDir, bool keepModels)
     {
         if (service.UseSystemInstaller)
         {
@@ -362,21 +367,132 @@ public class InstallerService : IDisposable
             ? installDir
             : Path.Combine(installDir, service.RelativeInstallPath);
 
-        if (Directory.Exists(targetPath))
+        if (!Directory.Exists(targetPath)) return;
+
+        // Models live under ModelsScanRoot when the service uses split
+        // category folders (ComfyUI: models/checkpoints, models/loras, …),
+        // and ModelsSubfolder for flat layouts. Falling back to the second
+        // covers older registry entries where ScanRoot wasn't set.
+        string modelsRel = string.IsNullOrEmpty(service.ModelsScanRoot)
+            ? service.ModelsSubfolder
+            : service.ModelsScanRoot;
+
+        if (keepModels && !string.IsNullOrEmpty(modelsRel))
+        {
+            await Task.Run(() => UninstallExceptModels(service, targetPath, modelsRel));
+        }
+        else
         {
             InstallLog?.Invoke(service.Id, $"Removing {targetPath}...");
-            await Task.Run(() => ForceDeleteDirectory(targetPath));
+            await Task.Run(() => SoftDeleteDirectory(service.Id, targetPath));
             InstallLog?.Invoke(service.Id, "Uninstalled.");
         }
     }
 
-    // git on Windows marks pack files (.git/objects/pack/*.idx etc.) as
-    // read-only, which makes Directory.Delete throw UnauthorizedAccessException
-    // halfway through. Walk the tree and clear the attribute first.
-    private static void ForceDeleteDirectory(string path)
+    // Wipe everything under targetPath except the configured models folder.
+    // Used by the "Keep models on uninstall" path so re-installing doesn't
+    // force the user to redownload tens of GB. Walks top-level entries —
+    // anything matching the relative models prefix (e.g. "models" or
+    // "models/checkpoints") is preserved, the rest is sent to the Recycle
+    // Bin via SoftDeleteDirectory / SoftDeleteFile.
+    private void UninstallExceptModels(ServiceDefinition service, string targetPath, string modelsRel)
+    {
+        // Normalize to platform separators and to the *first* segment —
+        // we preserve whichever top-level directory contains the models
+        // tree (typical layouts are "models" or "models/checkpoints"; the
+        // first segment is "models" in both cases).
+        string firstSegment = modelsRel.Replace('/', Path.DirectorySeparatorChar)
+                                       .Split(Path.DirectorySeparatorChar)[0];
+        string preserveAbs = Path.Combine(targetPath, firstSegment);
+
+        InstallLog?.Invoke(service.Id, $"Removing {targetPath} (preserving {preserveAbs})...");
+        foreach (var entry in Directory.EnumerateFileSystemEntries(targetPath))
+        {
+            if (string.Equals(entry, preserveAbs, StringComparison.OrdinalIgnoreCase))
+                continue;
+            try
+            {
+                if (Directory.Exists(entry))
+                    SoftDeleteDirectory(service.Id, entry);
+                else
+                    SoftDeleteFile(service.Id, entry);
+            }
+            catch (Exception ex)
+            {
+                InstallLog?.Invoke(service.Id, $"WARN: could not remove {entry}: {ex.Message}");
+            }
+        }
+        InstallLog?.Invoke(service.Id, "Uninstalled (models folder preserved).");
+    }
+
+    // Send a directory to the Recycle Bin so a misclick is recoverable
+    // through Windows' built-in restore. Recycle Bin has a per-drive size
+    // limit (~5–10% of disk by default); when Windows determines the
+    // payload won't fit, it falls back to permanent deletion silently —
+    // we log that case so a confused user has a thread to pull on.
+    //
+    // git on Windows marks pack files read-only, which made the legacy
+    // Directory.Delete path throw halfway through; we still clear the
+    // attribute on the way in so the VB DeleteDirectory call doesn't
+    // hit the same issue (UIOption.OnlyErrorDialogs would surface the
+    // dialog and freeze the UI thread).
+    private void SoftDeleteDirectory(string serviceId, string path)
     {
         if (!Directory.Exists(path)) return;
+        ClearReadOnlyRecursive(path);
+        try
+        {
+            // ShowUI=OnlyErrorDialogs avoids the standard "Are you sure?" prompt
+            // (we already showed our own confirm) but still surfaces *errors*,
+            // which is what we want — a permission/lock failure shouldn't be
+            // silent. UICancelOption.DoNothing means a user-cancel doesn't throw.
+            Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(
+                path,
+                Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,
+                Microsoft.VisualBasic.FileIO.UICancelOption.DoNothing);
+        }
+        catch (Exception ex)
+        {
+            InstallLog?.Invoke(serviceId,
+                $"WARN: Recycle Bin delete failed ({ex.Message}); falling back to permanent delete.");
+            try { Directory.Delete(path, recursive: true); }
+            catch (Exception ex2)
+            {
+                InstallLog?.Invoke(serviceId, $"ERROR: permanent delete also failed: {ex2.Message}");
+                throw;
+            }
+        }
+    }
 
+    private void SoftDeleteFile(string serviceId, string path)
+    {
+        if (!File.Exists(path)) return;
+        try
+        {
+            var attrs = File.GetAttributes(path);
+            if ((attrs & FileAttributes.ReadOnly) != 0)
+                File.SetAttributes(path, attrs & ~FileAttributes.ReadOnly);
+        }
+        catch { /* best-effort */ }
+        try
+        {
+            Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
+                path,
+                Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,
+                Microsoft.VisualBasic.FileIO.UICancelOption.DoNothing);
+        }
+        catch (Exception ex)
+        {
+            InstallLog?.Invoke(serviceId,
+                $"WARN: Recycle Bin delete failed for {path} ({ex.Message}); falling back to permanent delete.");
+            try { File.Delete(path); } catch { /* swallow */ }
+        }
+    }
+
+    private static void ClearReadOnlyRecursive(string path)
+    {
         foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
         {
             try
@@ -385,10 +501,8 @@ public class InstallerService : IDisposable
                 if ((attrs & FileAttributes.ReadOnly) != 0)
                     File.SetAttributes(file, attrs & ~FileAttributes.ReadOnly);
             }
-            catch { /* best-effort — Delete will report the real error if it fails */ }
+            catch { /* best-effort */ }
         }
-
-        Directory.Delete(path, recursive: true);
     }
 
     public bool IsInstalled(ServiceDefinition service, string installDir)

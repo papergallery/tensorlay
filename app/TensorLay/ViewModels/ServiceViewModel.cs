@@ -183,6 +183,29 @@ public partial class ServiceViewModel : ViewModelBase
     [RelayCommand]
     private async Task Uninstall()
     {
+        // Anti-misclick: a real user-initiated uninstall always goes through
+        // a confirm dialog with a computed-size warning and the
+        // "Keep models" opt-in. The Install() retry path calls
+        // _installerService.Uninstall directly to skip this gate (cleanup
+        // after a half-finished install isn't a misclick scenario).
+        var settingsForConfirm = _settingsService.Load();
+        string targetPath = string.IsNullOrEmpty(Definition.RelativeInstallPath)
+            ? settingsForConfirm.InstallDirectory
+            : System.IO.Path.Combine(settingsForConfirm.InstallDirectory, Definition.RelativeInstallPath);
+
+        // Offer the keep-models toggle only when the service registers a
+        // models folder we can spare from deletion. Ollama (UseSystemInstaller)
+        // throws inside Uninstall anyway and has no model dir we own.
+        bool offerKeep = !Definition.UseSystemInstaller
+            && !string.IsNullOrEmpty(Definition.ModelsScanRoot.Length > 0 ? Definition.ModelsScanRoot : Definition.ModelsSubfolder);
+
+        var (confirmed, keepModels) = await Views.UninstallConfirmWindow.AskAsync(
+            System.Windows.Application.Current?.MainWindow,
+            Definition.DisplayName,
+            targetPath,
+            offerKeep);
+        if (!confirmed) return;
+
         Exception? failure = null;
         try
         {
@@ -190,7 +213,7 @@ public partial class ServiceViewModel : ViewModelBase
                 await Stop();
 
             var settings = _settingsService.Load();
-            await _installerService.Uninstall(Definition, settings.InstallDirectory);
+            await _installerService.Uninstall(Definition, settings.InstallDirectory, keepModels);
             State = ServiceState.NotInstalled;
             Models.Clear();
         }

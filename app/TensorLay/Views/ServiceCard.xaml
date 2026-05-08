@@ -191,12 +191,24 @@
                         Visibility="{Binding State, Converter={StaticResource StateToVisibility},
                                      ConverterParameter='Running,Starting'}"/>
 
-                <Button Content="Uninstall"
-                        Style="{StaticResource SecondaryButton}"
-                        Padding="14,7"
-                        Command="{Binding UninstallCommand}"
+                <!-- Uninstall demoted to overflow menu after the 2026-05-06
+                     misclick incident — kept reachable on Stopped state but
+                     no longer adjacent to Start. -->
+                <Button Style="{StaticResource SecondaryButton}"
+                        Padding="10,7" Margin="16,0,0,0"
+                        FontSize="14" ToolTip="More actions"
+                        Click="OverflowButton_Click"
                         Visibility="{Binding State, Converter={StaticResource StateToVisibility},
-                                     ConverterParameter='Stopped,NotInstalled'}"/>
+                                     ConverterParameter=Stopped}">
+                    <TextBlock Text="⋯" Foreground="#6B6B6B"/>
+                    <Button.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Uninstall…"
+                                      Command="{Binding PlacementTarget.DataContext.UninstallCommand,
+                                                        RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                        </ContextMenu>
+                    </Button.ContextMenu>
+                </Button>
 
             </StackPanel>
 
