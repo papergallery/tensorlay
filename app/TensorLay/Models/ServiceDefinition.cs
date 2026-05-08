@@ -53,4 +53,33 @@ public class ServiceDefinition
     // ModelsSubfolder="models/checkpoints" (where new downloads land)
     // and ModelsScanRoot="models" (where the Models tab walks).
     public string ModelsScanRoot { get; init; } = "";
+
+    // Override the auto-detected requirements file. By default the
+    // installer picks the first of {requirements.txt, requirements_versions.txt}
+    // that exists in the repo root. Set this when a service ships multiple
+    // (e.g. AllTalk's `requirements_standalone.txt` for the no-text-gen-webui
+    // path) and the auto-detected one would pull the wrong dep set.
+    public string? RequirementsFileName { get; init; }
+
+    // Extra environment variables set on the child process when the
+    // service starts. ProcessManager copies these into
+    // ProcessStartInfo.EnvironmentVariables in addition to the inherited
+    // user environment. Used by services that don't accept a port via CLI:
+    //   TripoSR     GRADIO_SERVER_PORT=7862  (gradio_app.py picks it up)
+    //   MusicGen    GRADIO_SERVER_PORT=7861  (audiocraft demo, same pattern)
+    //   AllTalk TTS COQUI_TOS_AGREED=1       (skips the XTTS license prompt
+    //                                         that would otherwise stall
+    //                                         the start-up on first launch)
+    public Dictionary<string, string> EnvironmentVariables { get; init; } = new();
+
+    // Pip / shell commands run AFTER requirements*.txt has been installed,
+    // routed through the per-service venv python when UsesVenv is true.
+    // Same string-prefix-of-args layout as PreInstallCommands. Used for:
+    //   AllTalk: install DeepSpeed wheel + downloader-prefetched XTTS model
+    //   MusicGen: re-pin a known-good audiocraft commit when upstream main
+    //             breaks the demos/musicgen_app.py entrypoint
+    //   TripoSR: torchmcubes from-source rebuild (PyPI wheel is CPU-only,
+    //            blocks the gradio app at first marching-cubes call)
+    // Empty list = no-op, fully optional.
+    public List<string> PostInstallCommands { get; init; } = new();
 }

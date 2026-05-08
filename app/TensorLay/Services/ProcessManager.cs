@@ -78,6 +78,18 @@ public class ProcessManager : IDisposable
             CreateNoWindow = true
         };
 
+        // Per-service environment variables (added in 0.9.11). Used by:
+        //   TripoSR    GRADIO_SERVER_PORT=7862  (gradio_app.py honors it)
+        //   MusicGen   GRADIO_SERVER_PORT=7861  (audiocraft demo, same)
+        //   AllTalk    COQUI_TOS_AGREED=1       (skip XTTS first-run prompt)
+        // Inherits the rest of the user environment so PATH / CUDA_PATH /
+        // HF_HOME etc. continue to work — we only add, never replace.
+        foreach (var kv in service.EnvironmentVariables)
+        {
+            if (string.IsNullOrEmpty(kv.Key)) continue;
+            psi.EnvironmentVariables[kv.Key] = kv.Value;
+        }
+
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
 
         string serviceId = service.Id;

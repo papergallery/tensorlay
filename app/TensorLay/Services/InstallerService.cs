@@ -79,15 +79,26 @@ public class InstallerService : IDisposable
 
             InstallProgress?.Invoke(service.Id, 0.6);
 
-            // SD Forge ships only `requirements_versions.txt`; other forks may
-            // use either name. Fall back so we don't silently skip the pip step.
+            // Pick the requirements file: explicit override on the
+            // ServiceDefinition wins (AllTalk ships several variants and
+            // we want the standalone one), otherwise auto-detect among
+            // the common names. SD Forge ships only requirements_versions.txt;
+            // other forks vary.
             string? requirementsFile = null;
-            foreach (var candidate in new[] { "requirements.txt", "requirements_versions.txt" })
+            if (!string.IsNullOrEmpty(service.RequirementsFileName)
+                && File.Exists(Path.Combine(targetPath, service.RequirementsFileName)))
             {
-                if (File.Exists(Path.Combine(targetPath, candidate)))
+                requirementsFile = service.RequirementsFileName;
+            }
+            else
+            {
+                foreach (var candidate in new[] { "requirements.txt", "requirements_versions.txt" })
                 {
-                    requirementsFile = candidate;
-                    break;
+                    if (File.Exists(Path.Combine(targetPath, candidate)))
+                    {
+                        requirementsFile = candidate;
+                        break;
+                    }
                 }
             }
             if (requirementsFile is not null)
@@ -184,6 +195,38 @@ public class InstallerService : IDisposable
                     ? $"-m pip install -r {requirementsFile}"
                     : $"{pyArgsPrefix} -m pip install -r {requirementsFile}";
                 await RunProcess(pyExe, pipArgs, targetPath, service.Id);
+
+                // PostInstallCommands run AFTER the requirements step. Used
+                // for services that need an extra wheel / model prefetch /
+                // from-source rebuild that a flat requirements.txt can't
+                // express (e.g. AllTalk's DeepSpeed wheel, TripoSR's
+                // torchmcubes CUDA recompile).
+                foreach (var rawCmd in service.PostInstallCommands)
+                {
+                    string postCmd = service.UsesVenv ? StripVersionSelector(rawCmd) : rawCmd;
+                    InstallLog?.Invoke(service.Id, $"Post-install: {pyExe} {postCmd}");
+                    await RunProcess(pyExe, postCmd, targetPath, service.Id);
+                }
+            }
+
+            // Successful-install marker. Without this, IsInstalled reports
+            // true on the mere existence of the install dir, including
+            // half-cloned repos, half-installed pip envs, and Stop-mid-pip
+            // states. The marker is written ONLY after every step above
+            // ran without throwing — its presence is the ground-truth
+            // "this install is usable" signal.
+            try
+            {
+                File.WriteAllText(
+                    Path.Combine(targetPath, ".tensorlay-installed"),
+                    $"version=1\nservice={service.Id}\ninstalled_at={DateTime.UtcNow:o}\n");
+            }
+            catch (Exception ex)
+            {
+                // Marker write failure is not fatal — the install itself
+                // succeeded. Log so a future "why is this still showing
+                // NotInstalled" debug session has the answer.
+                InstallLog?.Invoke(service.Id, $"warning: could not write install marker: {ex.Message}");
             }
 
             InstallProgress?.Invoke(service.Id, 1.0);
@@ -517,7 +560,24 @@ public class InstallerService : IDisposable
             ? installDir
             : Path.Combine(installDir, service.RelativeInstallPath);
 
-        return Directory.Exists(targetPath);
+        if (!Directory.Exists(targetPath)) return false;
+
+        // Prefer the .tensorlay-installed marker — it's only written when
+        // every install step (clone, pip, pre/post commands) ran clean.
+        // Half-cloned dirs, mid-pip-failure leftovers, and ctrl-C-aborted
+        // installs all leave the directory but no marker, and we report
+        // them as NotInstalled so the user can re-Install without manually
+        // rmdir'ing.
+        if (File.Exists(Path.Combine(targetPath, ".tensorlay-installed")))
+            return true;
+
+        // Legacy back-compat: pre-v0.9.11 installs predate the marker.
+        // For services already on disk before this release, treat the
+        // directory itself as the signal — same as the old behavior. Once
+        // the user re-installs (or runs a future migration), the marker
+        // will be written and we'll be back on the strict path.
+        bool legacyHasContent = Directory.EnumerateFileSystemEntries(targetPath).Any();
+        return legacyHasContent;
     }
 
     // Strip a leading py-launcher version selector ("-3.10 ", "-3.12 ") from

@@ -41,7 +41,7 @@ except ImportError:
 
 # ── Constants ─────────────────────────────────────────────────────────────
 
-VERSION = "1.3.5"
+VERSION = "1.3.6"
 DATA_DIR = Path("/opt/tensorlay-relay")
 PAIRING_CODE_FILE = DATA_DIR / "pairing_code"
 SERVICE_TOKEN_FILE = DATA_DIR / "service_token"
@@ -93,12 +93,19 @@ DESKTOP_TRANSITIONS = {
 
 # Service definitions — kept in sync with desktop ServiceRegistry.cs.
 # `port` is the remote-forward port we permit on authorized_keys.
-# alltalk/musicgen/triposr removed in v0.9.2 alongside their broken installers
-# in the desktop registry — see ServiceRegistry.cs for the why.
+# alltalk/musicgen/triposr returned in v0.9.11 once the desktop registry
+# regained env-var + post-install support — see ServiceRegistry.cs for the
+# upstream brittleness notes per service. KEEP this list aligned with the
+# desktop registry; drift means /pair authorizes the wrong ports and the
+# `permitlisten` whitelist below either rejects legitimate forwards or
+# allows extras.
 SERVICES = [
     {"id": "sd-forge", "name": "SD Forge",    "port": 7860,  "category": "image", "health": "/"},
     {"id": "comfyui",  "name": "ComfyUI",     "port": 8188,  "category": "image", "health": "/"},
     {"id": "ollama",   "name": "Ollama",      "port": 11434, "category": "text",  "health": "/api/tags"},
+    {"id": "alltalk",  "name": "AllTalk TTS", "port": 7851,  "category": "audio", "health": "/api/ready"},
+    {"id": "musicgen", "name": "MusicGen",    "port": 7861,  "category": "audio", "health": "/"},
+    {"id": "triposr",  "name": "TripoSR",     "port": 7862,  "category": "3d",    "health": "/"},
 ]
 
 # authorized_keys options for the paired client. We list the disable flags
