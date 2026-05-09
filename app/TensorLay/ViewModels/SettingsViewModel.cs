@@ -37,6 +37,9 @@ public partial class SettingsViewModel : ViewModelBase
     [ObservableProperty]
     private bool _allowRemoteInstallRequests;
 
+    [ObservableProperty]
+    private bool _allowRemoteLogRequests;
+
     // True only when the relay returned a non-empty remote_tasks_token at
     // pair time (i.e. relay >= v1.3.0). Toggle is grayed out when false.
     [ObservableProperty]
@@ -62,6 +65,7 @@ public partial class SettingsViewModel : ViewModelBase
         AutostartWithWindows = settings.AutostartWithWindows;
         AutoconnectTunnel = settings.AutoconnectTunnel;
         AllowRemoteInstallRequests = settings.AllowRemoteInstallRequests;
+        AllowRemoteLogRequests = settings.AllowRemoteLogRequests;
         RemoteInstallSupported = !string.IsNullOrEmpty(settings.RemoteTasksToken);
     }
 
@@ -82,6 +86,7 @@ public partial class SettingsViewModel : ViewModelBase
         settings.AutostartWithWindows = AutostartWithWindows;
         settings.AutoconnectTunnel = AutoconnectTunnel;
         settings.AllowRemoteInstallRequests = AllowRemoteInstallRequests;
+        settings.AllowRemoteLogRequests = AllowRemoteLogRequests;
         _settingsService.Save(settings);
     }
 

@@ -42,4 +42,12 @@ public class AppSettings
     // doesn't see the same modal again after dismissing it. Compared against
     // RemoteTask.AgentLabel.
     public List<string> RejectedAgentLabels { get; set; } = new();
+
+    // v1.5.0 — remote log retrieval. Off by default: logs may contain file
+    // paths, model names, error messages with paths embedded; user has to
+    // explicitly opt in. When ON, RemoteLogService responds to relay's
+    // /api/logs/pending by bundling recent downloads-*.log files + crash.log
+    // and uploading them. When OFF, every request is auto-rejected with a
+    // reason the agent can read via /api/logs/{id}/info.
+    public bool AllowRemoteLogRequests { get; set; } = false;
 }

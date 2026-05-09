@@ -1,7 +1,7 @@
 #!/bin/bash
 # TensorLay Relay — one-command VPS installer
 # Usage: curl -sL https://tensorlay.com/install.sh | sudo bash
-set -e
+set -euo pipefail
 
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -30,6 +30,9 @@ RELAY_DIR="/opt/tensorlay-relay"
 VENV_DIR="${RELAY_DIR}/venv"
 SERVICE_NAME="tensorlay-relay"
 RELAY_URL="https://tensorlay.com/relay.py"
+RELAY_SHA256_URL="https://tensorlay.com/relay.py.sha256"
+CONFIG_EXAMPLE_URL="https://tensorlay.com/config.yaml.example"
+CONFIG_EXAMPLE_SHA256_URL="https://tensorlay.com/config.yaml.example.sha256"
 
 # Pinned versions — bump intentionally, not by accident.
 FASTAPI_VERSION="0.115.6"
@@ -67,31 +70,45 @@ chmod 0600 "${RELAY_HOME}/.ssh/authorized_keys"
 
 echo -e "${GREEN}[3/8]${NC} Setting up ${RELAY_DIR}..."
 mkdir -p "${RELAY_DIR}"
-curl -sL -H "Accept: text/plain" "${RELAY_URL}" -o "${RELAY_DIR}/relay.py"
-# Verify it's actually Python, not HTML (CDN/cache misroute).
-if head -1 "${RELAY_DIR}/relay.py" | grep -q "^<"; then
-    echo -e "${YELLOW}Warning: relay.py downloaded as HTML. Trying direct copy...${NC}"
-    if [ -f "/var/www/html/tensorlay/relay.py" ]; then
-        cp /var/www/html/tensorlay/relay.py "${RELAY_DIR}/relay.py"
-    else
-        echo -e "${YELLOW}Cannot recover relay.py. Aborting.${NC}"
-        exit 1
-    fi
+
+# Download relay.py + its SHA-256 sidecar and verify integrity before we
+# chmod+x and run it. The hash sidecar is served from the same origin so
+# this isn't full out-of-band trust (TLS to tensorlay.com is the actual
+# anchor), but it catches: (a) CDN cache poisoning where the hash file is
+# fresh but the script is stale, (b) drift between published relay.py and
+# what install.sh expects, (c) any HTTP-error body (502/HTML) that would
+# previously have been chmod+x'd and run as Python. -f makes curl fail on
+# non-2xx so we don't silently install an error page.
+curl -fsSL -H "Accept: text/plain" "${RELAY_URL}" -o "${RELAY_DIR}/relay.py"
+EXPECTED_RELAY_HASH=$(curl -fsSL -H "Accept: text/plain" "${RELAY_SHA256_URL}" | tr -d '[:space:]')
+ACTUAL_RELAY_HASH=$(sha256sum "${RELAY_DIR}/relay.py" | awk '{print $1}')
+if [ -z "${EXPECTED_RELAY_HASH}" ] || [ "${EXPECTED_RELAY_HASH}" != "${ACTUAL_RELAY_HASH}" ]; then
+    echo -e "${YELLOW}Integrity check FAILED for relay.py.${NC}"
+    echo "  expected: ${EXPECTED_RELAY_HASH:-(empty)}"
+    echo "  actual:   ${ACTUAL_RELAY_HASH}"
+    rm -f "${RELAY_DIR}/relay.py"
+    exit 1
 fi
 chmod +x "${RELAY_DIR}/relay.py"
 
 # Seed config.yaml on first install. Idempotent — never overwrites a
-# config the user has already customized.
-CONFIG_URL="https://tensorlay.com/config.yaml.example"
+# config the user has already customized. Same SHA-256 verification flow
+# as relay.py; mismatch falls back to built-in defaults rather than
+# aborting (the relay works fine without a config file).
 if [ ! -f "${RELAY_DIR}/config.yaml" ]; then
-    if curl -fsSL -H "Accept: text/plain" "${CONFIG_URL}" -o "${RELAY_DIR}/config.yaml" 2>/dev/null \
-       && ! head -1 "${RELAY_DIR}/config.yaml" | grep -q "^<"; then
-        echo "  Wrote default config.yaml from template"
+    CONFIG_TMP="${RELAY_DIR}/.config.yaml.dl.$$"
+    if curl -fsSL -H "Accept: text/plain" "${CONFIG_EXAMPLE_URL}" -o "${CONFIG_TMP}" 2>/dev/null; then
+        EXPECTED_CONFIG_HASH=$(curl -fsSL -H "Accept: text/plain" "${CONFIG_EXAMPLE_SHA256_URL}" 2>/dev/null | tr -d '[:space:]' || true)
+        ACTUAL_CONFIG_HASH=$(sha256sum "${CONFIG_TMP}" | awk '{print $1}')
+        if [ -n "${EXPECTED_CONFIG_HASH}" ] && [ "${EXPECTED_CONFIG_HASH}" = "${ACTUAL_CONFIG_HASH}" ]; then
+            mv "${CONFIG_TMP}" "${RELAY_DIR}/config.yaml"
+            echo "  Wrote default config.yaml from template (verified)"
+        else
+            rm -f "${CONFIG_TMP}"
+            echo "  config.yaml integrity check failed — relay will use built-in defaults"
+        fi
     else
-        # Fallback: leave the file absent. relay.py uses compiled-in defaults
-        # in that case, so the relay still works — just without admin
-        # customization until they create the file by hand.
-        rm -f "${RELAY_DIR}/config.yaml"
+        rm -f "${CONFIG_TMP}"
         echo "  config.yaml.example unavailable — relay will use built-in defaults"
     fi
 fi

@@ -53,14 +53,22 @@ osslsigncode sign \
 mv "$PROJECT_DIR/TensorLay-Setup_signed.exe" "$PROJECT_DIR/TensorLay-Setup.exe"
 
 # 6. Deploy
-cp "$PUBLISH_DIR/GpuHub.exe" "$UPDATE_DIR/GpuHub.exe"
-cp "$PROJECT_DIR/TensorLay-Setup.exe" "$UPDATE_DIR/TensorLay-Setup.exe"
-cp "$CERT_DIR/gpuhub_cert.pem" "$UPDATE_DIR/gpuhub_cert.cer"
+# $UPDATE_DIR is root-owned (security fix for #C3 — any process running as the
+# web/dev user could otherwise overwrite update artifacts and ship arbitrary
+# code to every installed client). Use sudo install to write atomically with
+# explicit mode + ownership; the deploy step is the only thing in publish.sh
+# that needs elevation. Falls back to interactive password prompt if the user
+# doesn't have passwordless sudo configured.
+sudo install -o root -g root -m 0644 "$PUBLISH_DIR/GpuHub.exe" "$UPDATE_DIR/GpuHub.exe"
+sudo install -o root -g root -m 0644 "$PROJECT_DIR/TensorLay-Setup.exe" "$UPDATE_DIR/TensorLay-Setup.exe"
+sudo install -o root -g root -m 0644 "$CERT_DIR/gpuhub_cert.pem" "$UPDATE_DIR/gpuhub_cert.cer"
 
 # Compute SHA256 over the SIGNED exe so the client can verify integrity.
 EXE_SHA256=$(sha256sum "$UPDATE_DIR/GpuHub.exe" | awk '{print $1}')
 
-cat > "$UPDATE_DIR/version.json" << EOF
+# Write version.json via sudo tee — same root-ownership constraint as the exes.
+# Trailing chmod is belt-and-braces; tee preserves the existing 0644 anyway.
+sudo tee "$UPDATE_DIR/version.json" > /dev/null << EOF
 {
     "version": "${VERSION}",
     "changelog": "Update to v${VERSION}",
@@ -68,6 +76,8 @@ cat > "$UPDATE_DIR/version.json" << EOF
     "sha256": "${EXE_SHA256}"
 }
 EOF
+sudo chmod 0644 "$UPDATE_DIR/version.json"
+sudo chown root:root "$UPDATE_DIR/version.json"
 
 echo ""
 echo "[+] Published v${VERSION}"

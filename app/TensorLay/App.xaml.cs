@@ -34,6 +34,7 @@ public partial class App : Application
     private InstallerService? _installerService;
     private ModelDownloader? _modelDownloader;
     private RemoteTaskService? _remoteTaskService;
+    private RemoteLogService? _remoteLogService;
     private GpuMonitor? _gpuMonitor;
     private SshTunnelService? _sshTunnelService;
     private AccountService? _accountService;
@@ -158,6 +159,11 @@ public partial class App : Application
         _installerService = new InstallerService();
         _modelDownloader = new ModelDownloader(settingsService);
         _remoteTaskService = new RemoteTaskService(settingsService, _modelDownloader);
+        // Remote log service polls /api/logs/pending. Loop runs always; the
+        // AllowRemoteLogRequests setting check happens per-request inside
+        // PollOnce so toggling it doesn't require a restart.
+        _remoteLogService = new RemoteLogService(settingsService);
+        _remoteLogService.StartPolling();
 
         var pairingService = new PairingService();
         var sshKeyService = new SshKeyService();
@@ -233,6 +239,7 @@ public partial class App : Application
         _processManager?.Dispose();
         _healthCheckService?.Dispose();
         _remoteTaskService?.Dispose();
+        _remoteLogService?.Dispose();
         _modelDownloader?.Dispose();
         _gpuMonitor?.Dispose();
         _sshTunnelService?.Dispose();

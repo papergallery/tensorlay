@@ -118,6 +118,24 @@
                         Pair against a v0.9.0+ relay to enable this.
                     </TextBlock>
 
+                    <!-- Divider -->
+                    <Border Height="1" Background="#EBEBEB" Margin="0,20,0,20"/>
+
+                    <!-- Remote log retrieval (v0.9.12+ desktop / v1.5.0+ relay) -->
+                    <TextBlock Text="REMOTE DIAGNOSTIC LOGS" FontSize="10" FontWeight="SemiBold"
+                               Foreground="#9B9B9B" Margin="0,0,0,12"/>
+                    <CheckBox IsChecked="{Binding AllowRemoteLogRequests}"
+                              IsEnabled="{Binding RemoteInstallSupported}"
+                              Content="Allow the VPS agent to fetch local log files"
+                              Foreground="#1A1A1A" Margin="0,0,0,6"/>
+                    <TextBlock FontSize="11" Foreground="#9B9B9B" TextWrapping="Wrap"
+                               Margin="22,0,0,0">
+                        When on, agent-initiated requests for diagnostic logs are answered
+                        with the recent downloads-YYYY-MM-DD.log files and crash.log
+                        (last few days, capped at 5 MB). Useful when an AI agent on the
+                        VPS needs to see why a download failed without you copying logs by hand.
+                    </TextBlock>
+
                 </StackPanel>
             </ScrollViewer>
 

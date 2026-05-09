@@ -41,7 +41,7 @@ except ImportError:
 
 # ── Constants ─────────────────────────────────────────────────────────────
 
-VERSION = "1.3.6"
+VERSION = "1.5.0"
 DATA_DIR = Path("/opt/tensorlay-relay")
 PAIRING_CODE_FILE = DATA_DIR / "pairing_code"
 SERVICE_TOKEN_FILE = DATA_DIR / "service_token"
@@ -51,6 +51,13 @@ TASKS_DB_FILE = DATA_DIR / "tasks.db"
 AGENT_TOKEN_FILE = DATA_DIR / "agent_token"            # set by --issue-agent-token
 REMOTE_TASKS_TOKEN_FILE = DATA_DIR / "remote_tasks_token"  # rotated on every /pair
 CONFIG_FILE = DATA_DIR / "config.yaml"
+
+# v1.5.0 — remote log retrieval feature. Diagnostic blobs uploaded by the
+# desktop in response to /api/logs/request live as plain text files in this
+# dir. Path-per-id keeps the tasks DB lean (no megabyte BLOBs in SQLite) and
+# lets the admin tail/grep them with regular Unix tools.
+LOGS_DIR = DATA_DIR / "logs"
+MAX_LOG_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB cap on each upload
 
 DEFAULT_TASK_TTL_SECONDS = 86400          # 24h before pending tasks auto-expire
 DEFAULT_TERMINAL_RETENTION_SECONDS = 7 * 86400  # keep finished tasks for 7d as audit trail
@@ -66,6 +73,11 @@ DEFAULT_INSTALL_RATE_LIMIT = "10/hour"     # SlowAPI string for /api/tasks/insta
 # When this pattern matches, the relay reverts the task to 'approved' so
 # the agent re-pulls it on the next poll without another GUI click.
 REAPER_FAILURE_PATTERN = re.compile(r"restart", re.IGNORECASE)
+# Cap on how many times a single task can be reverted via the reaper-failure
+# suppression path before we give up and let the failure stick. 2 covers the
+# realistic cases (one crash → recover → maybe one more crash) without
+# letting a misbehaving desktop loop forever (M5 fix).
+REAPER_MAX_SUPPRESSIONS = 2
 
 DEFAULT_ALLOWLIST_HOSTS = [
     "huggingface.co",
@@ -219,7 +231,15 @@ class InstallModelRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048)
     display_name: str = Field(..., min_length=1, max_length=200)
     size_mb: Optional[float] = None
-    sha256: Optional[str] = Field(default=None, max_length=128)
+    # sha256 is REQUIRED as of v1.3.7 — without it the desktop's integrity
+    # check (RemoteInstallViewModel.VerifySha256) is skipped, which means a
+    # leaked agent_token can submit a github.com/<attacker>/<repo>/raw/...
+    # URL and ride the user's "Approve" click straight to RCE. Format-locked
+    # to a 64-char hex string so we reject obvious junk before the row even
+    # lands in tasks.db. Existing pending rows in the DB with NULL sha256
+    # remain valid (the desktop's existing IsNullOrEmpty guard handles them);
+    # this validation only applies to NEW submissions.
+    sha256: str = Field(..., min_length=64, max_length=64, pattern=r"^[a-fA-F0-9]{64}$")
     reason: Optional[str] = Field(default=None, max_length=500)
     # v1.3.3 — optional ComfyUI models subfolder ('loras', 'vae', 'pulid',
     # 'insightface/models/antelopev2', etc). When None the desktop falls back
@@ -234,6 +254,21 @@ class TaskStatusUpdate(BaseModel):
     error_msg: Optional[str] = Field(default=None, max_length=500)
 
 
+class LogRequestCreate(BaseModel):
+    # Free-form context shown to the desktop ("debug install failure",
+    # "ssh tunnel keeps dropping"). Capped to keep the modal/log-line
+    # readable and to bound DB storage.
+    reason: Optional[str] = Field(default=None, max_length=500)
+    # How many days back of logs the desktop should pack (it rotates
+    # downloads-YYYY-MM-DD.log files daily, so this is a hint to its log
+    # gatherer). Bounded so a misconfigured agent can't ask for everything.
+    max_age_days: int = Field(default=7, ge=1, le=30)
+
+
+class LogRequestReject(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 
@@ -242,28 +277,29 @@ def _client_ip(request: Request) -> str:
 
 
 def _consume_pairing_code(submitted: str) -> bool:
-    """Atomically read the stored code, compare, and delete on match.
-
-    Returns True if codes match (and the file was deleted), False otherwise.
-    Concurrent /pair attempts cannot both succeed — only the rename-winner
-    sees the file.
+    """Verify the submitted pairing code; only on match, atomically claim
+    and delete the file. Wrong submissions do NOT consume the code — a
+    scanner POSTing a junk code to a freshly-installed relay must not be
+    able to brick pairing for the legitimate user (the previous version
+    renamed-then-compared with an unconditional unlink in finally, so any
+    incorrect /pair call deleted the code). Concurrent matched calls race
+    on rename; only the rename-winner returns True.
     """
-    if not PAIRING_CODE_FILE.exists():
+    try:
+        stored = PAIRING_CODE_FILE.read_text().strip()
+    except FileNotFoundError:
         return False
 
-    # Move the file aside first; whichever process wins the rename owns the
-    # code. Other concurrent calls find it already gone.
+    if not hmac.compare_digest(submitted.strip().upper(), stored.upper()):
+        return False
+
     claim = PAIRING_CODE_FILE.with_suffix(f".claim.{os.getpid()}.{secrets.token_hex(2)}")
     try:
         PAIRING_CODE_FILE.rename(claim)
     except FileNotFoundError:
         return False
-
-    try:
-        stored = claim.read_text().strip()
-        return hmac.compare_digest(submitted.strip().upper(), stored.upper())
-    finally:
-        claim.unlink(missing_ok=True)
+    claim.unlink(missing_ok=True)
+    return True
 
 
 def _compute_host_key_fingerprints() -> List[str]:
@@ -334,20 +370,47 @@ def _validate_public_key(key: str) -> bool:
     return True
 
 
+_SSH_KEY_TYPES = (
+    "ssh-ed25519", "ssh-rsa",
+    "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
+)
+
+
 def _append_authorized_key(key: str) -> None:
     """Append a key to authorized_keys with restricted options.
 
-    Idempotent — a key already present (regardless of leading options) is
-    not duplicated.
+    Idempotent: compares the (keytype, base64) tuple of every existing
+    line against the candidate, NOT raw substring `key in existing` — the
+    substring form had a false-positive class where a candidate key that
+    happens to appear inside another line's options/comment would be
+    silently treated as already-authorized and the desktop's freshly-
+    generated key would never make it into authorized_keys (M6 fix).
     """
     ssh_dir = Path.home() / ".ssh"
     ssh_dir.mkdir(mode=0o700, exist_ok=True)
     auth_keys = ssh_dir / "authorized_keys"
 
-    existing = auth_keys.read_text() if auth_keys.exists() else ""
-    if key in existing:
-        log.info("public key already authorized; skipping append")
-        return
+    candidate_parts = key.strip().split(None, 2)
+    if len(candidate_parts) < 2:
+        # _validate_public_key should have caught this; defensive only.
+        raise ValueError("malformed key passed to _append_authorized_key")
+    candidate_id = (candidate_parts[0], candidate_parts[1])
+
+    if auth_keys.exists():
+        for raw in auth_keys.read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            # authorized_keys line shape:
+            #   [options,...] keytype base64 [comment]
+            # Walk tokens to locate the keytype, then the base64 right after.
+            tokens = line.split()
+            for i, tok in enumerate(tokens):
+                if tok in _SSH_KEY_TYPES:
+                    if i + 1 < len(tokens) and (tok, tokens[i + 1]) == candidate_id:
+                        log.info("public key already authorized; skipping append")
+                        return
+                    break
 
     line = f"{PERMIT_OPTIONS} {key}\n"
     with auth_keys.open("a") as f:
@@ -473,14 +536,47 @@ def _init_db() -> None:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS tasks_state_idx ON tasks(state)")
         conn.execute("CREATE INDEX IF NOT EXISTS tasks_expires_idx ON tasks(expires_at)")
-        # v1.3.3 — in-place migration for the optional ComfyUI subfolder field.
         # SQLite has no IF NOT EXISTS for ADD COLUMN, so we swallow the
         # "duplicate column name" OperationalError on already-migrated DBs.
+        # v1.3.3 — optional ComfyUI subfolder routing.
         try:
             conn.execute("ALTER TABLE tasks ADD COLUMN target_subdir TEXT")
         except sqlite3.OperationalError:
             pass
+        # v1.4.1 — per-task suppression counter (M5 fix). Caps how many times
+        # a desktop can post state="failed"+error_msg matching restart and
+        # have the relay revert to "approved". Without this, a buggy/malicious
+        # desktop can keep a task in approved-redownload forever, burning the
+        # user's bandwidth/disk every restart.
+        try:
+            conn.execute("ALTER TABLE tasks ADD COLUMN reaper_suppressions INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        # v1.5.0 — log_requests table. Decoupled from `tasks` because the
+        # state machine (pending → completed | rejected | expired) is much
+        # simpler than install-model and reusing the same row would mean a
+        # bunch of nullable columns on either side. Storage convention:
+        # log_path is null until the desktop uploads, then points at
+        # LOGS_DIR/<id>.log.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS log_requests (
+                id           TEXT PRIMARY KEY,
+                created_at   REAL NOT NULL,
+                updated_at   REAL NOT NULL,
+                state        TEXT NOT NULL DEFAULT 'pending',
+                reason       TEXT,
+                max_age_days INTEGER NOT NULL DEFAULT 7,
+                expires_at   REAL NOT NULL,
+                log_path     TEXT,
+                log_size     INTEGER,
+                error_msg    TEXT
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS log_requests_state_idx ON log_requests(state)")
+        conn.execute("CREATE INDEX IF NOT EXISTS log_requests_expires_idx ON log_requests(expires_at)")
         conn.commit()
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    LOGS_DIR.chmod(0o700)
 
 
 @contextlib.contextmanager
@@ -531,6 +627,23 @@ def _iso(ts: float) -> str:
     """Unix timestamp → ISO-8601 UTC, no microseconds, with trailing Z."""
     import datetime as _dt
     return _dt.datetime.utcfromtimestamp(float(ts)).replace(microsecond=0).isoformat() + "Z"
+
+
+def _row_to_log_request(row: sqlite3.Row, *, include_internal: bool = False) -> dict:
+    """Project a log_requests row into the JSON shape the desktop/agent expects."""
+    out = {
+        "id": row["id"],
+        "state": row["state"],
+        "reason": row["reason"],
+        "max_age_days": row["max_age_days"],
+        "created_at": _iso(row["created_at"]),
+        "expires_at": _iso(row["expires_at"]),
+    }
+    if include_internal:
+        out["updated_at"] = _iso(row["updated_at"])
+        out["log_size"] = row["log_size"]
+        out["error_msg"] = row["error_msg"]
+    return out
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────
@@ -716,10 +829,14 @@ def task_post_status(
         raise HTTPException(status_code=400, detail="progress_pct must be 0..100")
     now = time.time()
     with _db() as conn:
-        row = conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        row = conn.execute(
+            "SELECT state, reaper_suppressions FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        current = row[0]
+        current = row["state"]
+        suppressions = row["reaper_suppressions"] if "reaper_suppressions" in row.keys() else 0
         if current in TERMINAL_STATES:
             raise HTTPException(status_code=409, detail=f"Task already {current}")
         # Same-state progress update — accept as no-op state change so older
@@ -734,22 +851,36 @@ def task_post_status(
             )
             return {"ok": True}
         # Reaper-failure suppression — see REAPER_FAILURE_PATTERN docstring.
+        # Capped at REAPER_MAX_SUPPRESSIONS (M5): after the cap is hit, fall
+        # through to the normal state machine so the task can actually fail
+        # and stop looping.
         if (
             current == "downloading"
             and body.state == "failed"
             and body.error_msg
             and REAPER_FAILURE_PATTERN.search(body.error_msg)
         ):
-            log.warning(
-                "reaper-failure suppressed for task %s (reason=%r) — reverting to approved",
-                task_id, body.error_msg,
-            )
-            conn.execute(
-                "UPDATE tasks SET state = 'approved', error_msg = NULL, "
-                "progress_pct = NULL, updated_at = ? WHERE id = ?",
-                (now, task_id),
-            )
-            return {"ok": True, "suppressed": "reaper-failure"}
+            if suppressions >= REAPER_MAX_SUPPRESSIONS:
+                log.warning(
+                    "reaper-failure NOT suppressed for task %s — already at cap (%d); "
+                    "letting failure stick",
+                    task_id, suppressions,
+                )
+                # Fall through to allowed_next check below.
+            else:
+                log.warning(
+                    "reaper-failure suppressed for task %s (reason=%r, suppression #%d) "
+                    "— reverting to approved",
+                    task_id, body.error_msg, suppressions + 1,
+                )
+                conn.execute(
+                    "UPDATE tasks SET state = 'approved', error_msg = NULL, "
+                    "progress_pct = NULL, updated_at = ?, "
+                    "reaper_suppressions = reaper_suppressions + 1 "
+                    "WHERE id = ?",
+                    (now, task_id),
+                )
+                return {"ok": True, "suppressed": "reaper-failure"}
         allowed_next = DESKTOP_TRANSITIONS.get(current, set())
         if body.state not in allowed_next:
             raise HTTPException(
@@ -795,6 +926,181 @@ def task_revoke(task_id: str, _: None = Depends(_require_agent_token)):
     return {"ok": True}
 
 
+# ── Log request endpoints (v1.5.0 — remote diagnostic blobs) ─────────────
+
+
+@app.post("/api/logs/request", status_code=202)
+def logs_request(
+    request: Request,
+    body: LogRequestCreate,
+    _: None = Depends(_require_agent_token),
+):
+    """Agent asks the desktop to upload its logs. The desktop polls
+    /api/logs/pending; if its AllowRemoteLogRequests setting is on it
+    gathers the relevant files and POSTs them. Otherwise it /rejects so
+    the agent doesn't sit there waiting."""
+    log_id = str(uuid.uuid4())
+    now = time.time()
+    expires = now + float(CONFIG["tasks"]["ttl_seconds"])
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO log_requests (id, created_at, updated_at, state, reason, "
+            "max_age_days, expires_at) VALUES (?, ?, ?, 'pending', ?, ?, ?)",
+            (log_id, now, now, body.reason, body.max_age_days, expires),
+        )
+    log.info("logs/request: created id=%s days=%d", log_id, body.max_age_days)
+    return {"id": log_id}
+
+
+@app.get("/api/logs/pending")
+def logs_pending(_: None = Depends(_require_remote_tasks_token)):
+    """Desktop polls. Returns pending log requests (non-terminal, not expired)."""
+    now = time.time()
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM log_requests "
+            "WHERE state = 'pending' AND expires_at > ? "
+            "ORDER BY created_at ASC",
+            (now,),
+        ).fetchall()
+    return {"requests": [_row_to_log_request(r) for r in rows]}
+
+
+@app.post("/api/logs/{log_id}")
+async def logs_upload(
+    log_id: str,
+    request: Request,
+    _: None = Depends(_require_remote_tasks_token),
+):
+    """Desktop uploads the gathered log content. Body is raw bytes
+    (text/plain or application/octet-stream); 10 MB cap enforced via
+    Content-Length pre-check + streamed-read kill-switch (the streamed
+    check covers chunked-encoding bodies that omit Content-Length)."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT state FROM log_requests WHERE id = ?", (log_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Log request not found")
+    if row["state"] != "pending":
+        raise HTTPException(status_code=409, detail=f"Log request already {row['state']}")
+
+    cl = request.headers.get("content-length")
+    if cl is not None:
+        try:
+            if int(cl) > MAX_LOG_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="Log too large")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length")
+
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    target = LOGS_DIR / f"{log_id}.log"
+    written = 0
+    try:
+        with target.open("wb") as f:
+            async for chunk in request.stream():
+                written += len(chunk)
+                if written > MAX_LOG_UPLOAD_BYTES:
+                    f.close()
+                    target.unlink(missing_ok=True)
+                    raise HTTPException(status_code=413, detail="Log too large")
+                f.write(chunk)
+        target.chmod(0o600)
+    except HTTPException:
+        raise
+    except Exception as ex:
+        target.unlink(missing_ok=True)
+        log.exception("logs/upload: failed to write %s: %s", log_id, ex)
+        raise HTTPException(status_code=500, detail="Failed to store log")
+
+    now = time.time()
+    with _db() as conn:
+        conn.execute(
+            "UPDATE log_requests SET state = 'completed', log_path = ?, "
+            "log_size = ?, updated_at = ? WHERE id = ?",
+            (str(target), written, now, log_id),
+        )
+    log.info("logs/upload: id=%s wrote %d bytes", log_id, written)
+    return {"ok": True, "size": written}
+
+
+@app.post("/api/logs/{log_id}/reject")
+def logs_reject(
+    log_id: str,
+    body: LogRequestReject,
+    _: None = Depends(_require_remote_tasks_token),
+):
+    """Desktop refuses (e.g., AllowRemoteLogRequests off, or no logs found).
+    Agent reads the reason via /api/logs/{id}/info."""
+    now = time.time()
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT state FROM log_requests WHERE id = ?", (log_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Log request not found")
+        if row["state"] != "pending":
+            raise HTTPException(status_code=409, detail=f"Log request already {row['state']}")
+        conn.execute(
+            "UPDATE log_requests SET state = 'rejected', error_msg = ?, "
+            "updated_at = ? WHERE id = ?",
+            (body.reason, now, log_id),
+        )
+    log.info("logs/reject: id=%s", log_id)
+    return {"ok": True}
+
+
+@app.get("/api/logs/{log_id}/info")
+def logs_info(log_id: str, _: None = Depends(_require_agent_token)):
+    """Agent fetches metadata only. Use GET /api/logs/{id} for content."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM log_requests WHERE id = ?", (log_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Log request not found")
+    return _row_to_log_request(row, include_internal=True)
+
+
+@app.get("/api/logs/{log_id}")
+def logs_fetch(log_id: str, _: None = Depends(_require_agent_token)):
+    """Agent fetches the uploaded log content as JSON {id, content}.
+    409 until state=completed; 410 if the file was purged by the expire
+    sweep."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT state, log_path FROM log_requests WHERE id = ?", (log_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Log request not found")
+    if row["state"] != "completed" or not row["log_path"]:
+        raise HTTPException(status_code=409, detail=f"Log not ready (state={row['state']})")
+    path = Path(row["log_path"])
+    if not path.exists():
+        raise HTTPException(status_code=410, detail="Log file gone (expired)")
+    return JSONResponse(
+        content={"id": log_id, "content": path.read_text(errors="replace")},
+    )
+
+
+@app.delete("/api/logs/{log_id}")
+def logs_delete(log_id: str, _: None = Depends(_require_agent_token)):
+    """Agent cleanup. Removes the row and the on-disk log file."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT log_path FROM log_requests WHERE id = ?", (log_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Log request not found")
+        if row["log_path"]:
+            try:
+                Path(row["log_path"]).unlink(missing_ok=True)
+            except OSError:
+                pass
+        conn.execute("DELETE FROM log_requests WHERE id = ?", (log_id,))
+    return {"ok": True}
+
+
 # ── Background expire loop ────────────────────────────────────────────────
 
 
@@ -821,8 +1127,40 @@ async def _expire_loop():
                     (now - retention,),
                 )
                 purged_count = cur.rowcount
-            if expired_count or purged_count:
-                log.info("expire_loop: expired=%d purged=%d", expired_count, purged_count)
+
+                # log_requests cleanup — same window as tasks. Do this BEFORE
+                # the DELETE so we still know the log_path values to unlink.
+                cur = conn.execute(
+                    "UPDATE log_requests SET state = 'expired', updated_at = ? "
+                    "WHERE state = 'pending' AND expires_at < ?",
+                    (now, now),
+                )
+                log_expired_count = cur.rowcount
+                old_log_paths = [
+                    r["log_path"] for r in conn.execute(
+                        "SELECT log_path FROM log_requests "
+                        "WHERE state IN ('completed','rejected','expired') "
+                        "AND updated_at < ? AND log_path IS NOT NULL",
+                        (now - retention,),
+                    ).fetchall()
+                ]
+                for p in old_log_paths:
+                    try:
+                        Path(p).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                cur = conn.execute(
+                    "DELETE FROM log_requests "
+                    "WHERE state IN ('completed','rejected','expired') "
+                    "AND updated_at < ?",
+                    (now - retention,),
+                )
+                log_purged_count = cur.rowcount
+            if expired_count or purged_count or log_expired_count or log_purged_count:
+                log.info(
+                    "expire_loop: tasks(expired=%d purged=%d) logs(expired=%d purged=%d)",
+                    expired_count, purged_count, log_expired_count, log_purged_count,
+                )
         except asyncio.CancelledError:
             raise
         except Exception:
