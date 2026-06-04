@@ -509,6 +509,21 @@ public static class ServiceRegistry
                 // trace in the Logs view instead of a blank "Error".
                 { "PYTHONFAULTHANDLER", "1" },
             },
+            // Start-time patch (applies to an ALREADY-installed copy, no
+            // reinstall): f5_tts/model/__init__.py eagerly imports Trainer,
+            // which pulls trainer -> datasets -> pyarrow. Under our numpy<2 pin
+            // pyarrow segfaults on Windows (0xC0000005) and kills startup.
+            // Inference only needs CFM/DiT/UNetT — never Trainer — so we stub
+            // the Trainer import out, and the datasets/pyarrow chain is never
+            // touched. This is the robust fix; the pyarrow==15.0.2 PreInstall
+            // pin is kept as belt-and-suspenders for fresh installs.
+            SourceReplacements = new Dictionary<string, Dictionary<string, string>>
+            {
+                [@".venv\Lib\site-packages\f5_tts\model\__init__.py"] = new Dictionary<string, string>
+                {
+                    { "from f5_tts.model.trainer import Trainer", "Trainer = None  # stubbed by TensorLay: avoids datasets->pyarrow import crash; inference doesn't use Trainer" },
+                },
+            },
             StartExecutable = "py",
             StartArguments = "-3.10 -m f5_tts.infer.infer_gradio --port 7863 --host 127.0.0.1",
             ModelsSubfolder = "",   // F5-TTS pulls checkpoints from HF on demand
