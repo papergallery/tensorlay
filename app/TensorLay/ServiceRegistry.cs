@@ -289,6 +289,103 @@ public static class ServiceRegistry
             ModelsSubfolder = "",   // models cached in HF_HOME, not in repo dir
             UseSystemInstaller = false,
             UsesVenv = true
+        },
+        new ServiceDefinition
+        {
+            // Faster-Whisper (speaches) — speech-to-text with word/segment
+            // timestamps, OpenAI-compatible /v1/audio/transcriptions. Added
+            // for the video-dubbing pipeline (tools/dub/dub.py): it produces
+            // the timed transcript that ollama then translates and alltalk
+            // re-voices in the cloned voice.
+            //
+            // No requirements.txt: speaches is a pyproject/uv project, so the
+            // InstallerService requirements step is skipped (requirementsFile
+            // stays null) and we editable-install it in PostInstallCommands
+            // instead — same idiom as MusicGen's `pip install -e .`.
+            //
+            // No torch PreInstall: speaches transcribes via faster-whisper →
+            // CTranslate2, NOT torch. CUDA acceleration comes from the
+            // nvidia-cublas/cudnn cu12 wheels that the editable install pulls
+            // in, so a torch pin would just bloat the venv by ~2 GB for
+            // nothing. (Contrast every other service here, which IS torch.)
+            //
+            // Entry point: speaches ships an app factory (confirmed against
+            // their Dockerfile CMD: `uvicorn --factory speaches.main:create_app`).
+            // --port pins 9000 (clear of 7860/7861/7862/7863/7851/8188/11434),
+            // overriding their default UVICORN_PORT=8000. Health: /health.
+            // First transcription downloads the large-v3 model (~3 GB) on
+            // demand, so the initial call is slow.
+            //
+            // Python 3.12 is REQUIRED: speaches pins `requires-python ==3.12.*`
+            // in pyproject — 3.11 or 3.13 fail the editable install. py.exe
+            // must therefore have a 3.12 available (`py -0` to verify).
+            Id = "whisper",
+            DisplayName = "Faster-Whisper",
+            Port = 9000,
+            VramMb = 3000,
+            Category = "audio",
+            HealthEndpoint = "/health",
+            GitRepoUrl = "https://github.com/speaches-ai/speaches.git",
+            RelativeInstallPath = "whisper",
+            PythonExecutable = "py",
+            PythonInterpreterArgs = "-3.12",
+            PostInstallCommands = new List<string>
+            {
+                "-m pip install -e ."
+            },
+            StartExecutable = "py",
+            StartArguments = "-3.12 -m uvicorn --factory speaches.main:create_app --host 127.0.0.1 --port 9000",
+            ModelsSubfolder = "",   // models cached in HF_HOME on first request
+            UseSystemInstaller = false,
+            UsesVenv = true
+        },
+        new ServiceDefinition
+        {
+            // F5-TTS — flow-matching TTS with high-fidelity, cross-lingual
+            // zero-shot voice cloning. Optional quality upgrade over AllTalk's
+            // XTTS for the dubbing pipeline (better long-form stability, fewer
+            // hallucinations). License is CC-BY-NC — non-commercial only, fine
+            // for the clan's own channel content.
+            //
+            // Same no-requirements.txt pattern as the whisper entry above:
+            // F5-TTS is a pyproject package, so we editable-install it in
+            // PostInstallCommands. torch IS needed here (the model runs on
+            // torch), so we keep the cu121 PreInstall pin like the rest.
+            //
+            // Entry point: the repo's gradio demo lives at
+            // f5_tts.infer.infer_gradio; `-m` runs its __main__. It takes
+            // --port/--host. If a future release renames the module, the pip
+            // console script `f5-tts_infer-gradio` is the fallback target.
+            // GRADIO_SERVER_* env mirrors the TripoSR/MusicGen routing so the
+            // demo binds 127.0.0.1:7863 even if the CLI flags are ignored.
+            Id = "f5-tts",
+            DisplayName = "F5-TTS",
+            Port = 7863,
+            VramMb = 4000,
+            Category = "audio",
+            HealthEndpoint = "/",
+            GitRepoUrl = "https://github.com/SWivid/F5-TTS.git",
+            RelativeInstallPath = "f5-tts",
+            PythonExecutable = "py",
+            PythonInterpreterArgs = "-3.10",
+            PreInstallCommands = new List<string>
+            {
+                "-3.10 -m pip install --force-reinstall torch==2.3.1+cu121 torchaudio==2.3.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121"
+            },
+            PostInstallCommands = new List<string>
+            {
+                "-m pip install -e ."
+            },
+            EnvironmentVariables = new Dictionary<string, string>
+            {
+                { "GRADIO_SERVER_PORT", "7863" },
+                { "GRADIO_SERVER_NAME", "127.0.0.1" },
+            },
+            StartExecutable = "py",
+            StartArguments = "-3.10 -m f5_tts.infer.infer_gradio --port 7863 --host 127.0.0.1",
+            ModelsSubfolder = "",   // F5-TTS pulls checkpoints from HF on demand
+            UseSystemInstaller = false,
+            UsesVenv = true
         }
     };
 }

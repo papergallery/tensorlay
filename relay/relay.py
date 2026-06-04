@@ -118,6 +118,8 @@ SERVICES = [
     {"id": "alltalk",  "name": "AllTalk TTS", "port": 7851,  "category": "audio", "health": "/api/ready"},
     {"id": "musicgen", "name": "MusicGen",    "port": 7861,  "category": "audio", "health": "/"},
     {"id": "triposr",  "name": "TripoSR",     "port": 7862,  "category": "3d",    "health": "/"},
+    {"id": "f5-tts",   "name": "F5-TTS",      "port": 7863,  "category": "audio", "health": "/"},
+    {"id": "whisper",  "name": "Faster-Whisper", "port": 9000, "category": "audio", "health": "/health"},
 ]
 
 # authorized_keys options for the paired client. We list the disable flags
