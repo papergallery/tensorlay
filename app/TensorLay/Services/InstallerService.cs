@@ -101,7 +101,20 @@ public class InstallerService : IDisposable
                     }
                 }
             }
-            if (requirementsFile is not null)
+            // Run the Python install pipeline (venv + Pre/PostInstall) whenever
+            // the service does ANY Python work — not only when a requirements.txt
+            // exists. pyproject-only services (speaches/whisper, F5-TTS) ship no
+            // requirements.txt and do their real install in PostInstallCommands
+            // ("pip install -e ."); gating the whole block on requirementsFile
+            // meant those services git-cloned and then silently did nothing —
+            // no venv, no editable install — yet still reported success and then
+            // failed at start. Only the `pip install -r` step itself is gated on
+            // requirementsFile below.
+            bool needsPythonSetup = requirementsFile is not null
+                || service.UsesVenv
+                || service.PreInstallCommands.Count > 0
+                || service.PostInstallCommands.Count > 0;
+            if (needsPythonSetup)
             {
                 // For sd-forge etc. service.PythonExecutable is "py" with
                 // PythonInterpreterArgs="-3.10" — must match the runtime
@@ -190,11 +203,14 @@ public class InstallerService : IDisposable
                     await RunProcess(pyExe, preCmd, targetPath, service.Id);
                 }
 
-                InstallLog?.Invoke(service.Id, $"Installing pip requirements ({requirementsFile})...");
-                string pipArgs = string.IsNullOrEmpty(pyArgsPrefix)
-                    ? $"-m pip install -r {requirementsFile}"
-                    : $"{pyArgsPrefix} -m pip install -r {requirementsFile}";
-                await RunProcess(pyExe, pipArgs, targetPath, service.Id);
+                if (requirementsFile is not null)
+                {
+                    InstallLog?.Invoke(service.Id, $"Installing pip requirements ({requirementsFile})...");
+                    string pipArgs = string.IsNullOrEmpty(pyArgsPrefix)
+                        ? $"-m pip install -r {requirementsFile}"
+                        : $"{pyArgsPrefix} -m pip install -r {requirementsFile}";
+                    await RunProcess(pyExe, pipArgs, targetPath, service.Id);
+                }
 
                 // PostInstallCommands run AFTER the requirements step. Used
                 // for services that need an extra wheel / model prefetch /
