@@ -477,7 +477,20 @@ public static class ServiceRegistry
             PreInstallCommands = new List<string>
             {
                 "-3.10 -m pip install --force-reinstall torch==2.3.1+cu121 torchaudio==2.3.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121",
-                "-3.10 -m pip install \"numpy<2\" \"transformers>=4.40,<5\" \"gradio>=5.0,<6\""
+                // pyarrow + datasets are pinned because torch 2.3.1 forces
+                // numpy<2 (above), and F5-TTS pulls `datasets` (only for
+                // training, but imported eagerly via f5_tts.model → trainer →
+                // datasets → pyarrow). The latest datasets (4.8.5) requires
+                // pyarrow>=21, whose wheels are built against numpy 2.x — and
+                // a numpy-2-built pyarrow loaded under numpy 1.26 CRASHES on
+                // Windows with an access violation (0xC0000005) the instant
+                // `pyarrow.dataset` imports, killing F5-TTS at startup with no
+                // Python traceback. pyarrow 15.0.2 declares `numpy<2` (ABI
+                // matches our numpy 1.26) and datasets<4.1 keeps the pyarrow
+                // floor at >=15 so the pin holds. Verified: this trio imports
+                // clean. transformers<5 keeps torch 2.3.1 enabled (5.x needs
+                // torch>=2.4); gradio<6 matches 1.1.9's UI code.
+                "-3.10 -m pip install \"numpy<2\" \"transformers>=4.40,<5\" \"gradio>=5.0,<6\" \"pyarrow==15.0.2\" \"datasets<4.1\""
             },
             PostInstallCommands = new List<string>
             {
@@ -487,14 +500,13 @@ public static class ServiceRegistry
             {
                 { "GRADIO_SERVER_PORT", "7863" },
                 { "GRADIO_SERVER_NAME", "127.0.0.1" },
-                // DIAGNOSTIC: F5-TTS EXITS nonzero right after the
-                // google.api_core import (UI flips to Error, which is the
-                // exitCode!=0 state) — it doesn't hang, it crashes, with no
-                // Python traceback. That pattern is a NATIVE crash during
-                // import (DLL access violation, or an OpenMP duplicate-runtime
-                // abort). PYTHONFAULTHANDLER makes the interpreter dump the
-                // Python stack at the faulting frame to stderr, so we see the
-                // exact import that crashes. Remove once diagnosed/fixed.
+                // Permanent safety net: F5-TTS sits on a fragile native stack
+                // (torch/cu121, pyarrow, vocos). If any of it ever crashes at
+                // the C level (the pyarrow access violation that this pin set
+                // fixes was exactly this), PYTHONFAULTHANDLER makes the
+                // interpreter dump the Python stack at the faulting frame to
+                // stderr — turning a silent nonzero exit into an actionable
+                // trace in the Logs view instead of a blank "Error".
                 { "PYTHONFAULTHANDLER", "1" },
             },
             StartExecutable = "py",
