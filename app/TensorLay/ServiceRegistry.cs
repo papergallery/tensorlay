@@ -272,6 +272,16 @@ public static class ServiceRegistry
                 {
                     { "[\"python\",", "[sys.executable," },
                 },
+                // modeldownload.py greps requirements_standalone.txt for a
+                // `TTS==` line to read the model version. RequirementsReplacements
+                // renamed that to coqui-tts==, so the grep found nothing and
+                // raised "Could not find TTS version specifier" — aborting the
+                // XTTS model download, which then left tts_server.py with no
+                // models/xttsv2_2.0.2/config.json (FileNotFoundError at start).
+                ["modeldownload.py"] = new Dictionary<string, string>
+                {
+                    { "\"TTS==\"", "\"coqui-tts==\"" },
+                },
             },
             PreInstallCommands = new List<string>
             {
