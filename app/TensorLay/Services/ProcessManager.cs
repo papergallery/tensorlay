@@ -167,6 +167,13 @@ public class ProcessManager : IDisposable
         {
             int code = 0;
             try { code = process.ExitCode; } catch { }
+            // Surface the exit code in the log. A nonzero code with no Python
+            // traceback above usually means a NATIVE crash during import — on
+            // Windows e.g. -1073741819 (0xC0000005 access violation) from a
+            // bad DLL load, or an OpenMP duplicate-runtime abort. Knowing the
+            // code distinguishes "crashed" from "exited cleanly".
+            if (code != 0)
+                OutputReceived?.Invoke(serviceId, $"Process exited with code {code} (0x{(uint)code:X8}).");
             ProcessExited?.Invoke(serviceId, code);
             // Value-equality TryRemove: a fresh StartService for the same
             // serviceId may have already replaced this entry with a new

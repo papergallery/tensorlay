@@ -487,19 +487,18 @@ public static class ServiceRegistry
             {
                 { "GRADIO_SERVER_PORT", "7863" },
                 { "GRADIO_SERVER_NAME", "127.0.0.1" },
+                // DIAGNOSTIC: F5-TTS EXITS nonzero right after the
+                // google.api_core import (UI flips to Error, which is the
+                // exitCode!=0 state) — it doesn't hang, it crashes, with no
+                // Python traceback. That pattern is a NATIVE crash during
+                // import (DLL access violation, or an OpenMP duplicate-runtime
+                // abort). PYTHONFAULTHANDLER makes the interpreter dump the
+                // Python stack at the faulting frame to stderr, so we see the
+                // exact import that crashes. Remove once diagnosed/fixed.
+                { "PYTHONFAULTHANDLER", "1" },
             },
             StartExecutable = "py",
-            // DIAGNOSTIC launch: F5-TTS hangs at import on some Windows/GPU
-            // boxes (silent after the google.api_core warning, before
-            // utils_infer's "Download Vocos" print) — a hang the Linux/CPU VPS
-            // can't reproduce. Wrap the module run in a faulthandler watchdog:
-            // if startup hasn't progressed past whatever it's stuck on in 120s,
-            // it dumps every thread's stack to stderr (visible via
-            // PYTHONUNBUFFERED) and KEEPS running (exit=False) — pinpointing the
-            // exact hanging line instead of guessing. sys.argv carries the
-            // gradio --port/--host through runpy. Revert to a plain
-            // `-m f5_tts.infer.infer_gradio` once the hang is fixed.
-            StartArguments = "-3.10 -c \"import faulthandler,sys,runpy;faulthandler.dump_traceback_later(120,exit=False);sys.argv=['f5-tts','--port','7863','--host','127.0.0.1'];runpy.run_module('f5_tts.infer.infer_gradio',run_name='__main__')\"",
+            StartArguments = "-3.10 -m f5_tts.infer.infer_gradio --port 7863 --host 127.0.0.1",
             ModelsSubfolder = "",   // F5-TTS pulls checkpoints from HF on demand
             UseSystemInstaller = false,
             UsesVenv = true
