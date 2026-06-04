@@ -95,4 +95,18 @@ public class ServiceDefinition
     //     its newer floor requires, and av==11 (no win wheel) -> av>=12.
     // Unmatched keys are logged as a warning (signals the upstream file drifted).
     public Dictionary<string, string> RequirementsReplacements { get; init; } = new();
+
+    // In-place source patches applied to the installed service's own files
+    // right BEFORE launch (idempotent — a file is rewritten only when a
+    // pattern actually matches and changes it). Keyed by path relative to the
+    // service's install dir; each value is a map of literal find -> replace.
+    // Used by AllTalk: its script.py launches the TTS engine and the model
+    // downloader via a BARE `python` subprocess (subprocess.Popen(["python",
+    // ...])). That bare name resolves to a global interpreter without the
+    // venv's torch/requests, so the TTS subprocess dies with ModuleNotFoundError
+    // even though script.py itself runs under the venv. Rewriting "python" to
+    // sys.executable pins the exact interpreter that launched script.py (the
+    // venv python). Applied at START — not just install — so an ALREADY
+    // installed service is fixed on the next Start without a reinstall.
+    public Dictionary<string, Dictionary<string, string>> SourceReplacements { get; init; } = new();
 }

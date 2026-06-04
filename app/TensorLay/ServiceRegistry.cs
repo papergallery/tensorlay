@@ -258,6 +258,21 @@ public static class ServiceRegistry
                 { "gruut-lang-fr",  "" },
                 { "trainer",        "" },
             },
+            // script.py spawns the TTS engine + model downloader via a bare
+            // `python` subprocess (subprocess.run/Popen(["python", ...])).
+            // ProcessManager launches script.py with the venv python, but the
+            // bare "python" in that subprocess resolves to a global interpreter
+            // without torch/requests, so the TTS subprocess dies with
+            // ModuleNotFoundError and AllTalk loops "TTS Subprocess has NOT
+            // started up" → timeout. Pin both call sites to the venv python
+            // that runs script.py (sys.executable, already imported there).
+            SourceReplacements = new Dictionary<string, Dictionary<string, string>>
+            {
+                ["script.py"] = new Dictionary<string, string>
+                {
+                    { "[\"python\",", "[sys.executable," },
+                },
+            },
             PreInstallCommands = new List<string>
             {
                 // Same +cu121 pinning idiom as Forge. AllTalk's

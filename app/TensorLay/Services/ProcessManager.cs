@@ -42,6 +42,34 @@ public class ProcessManager : IDisposable
             ? installDir
             : Path.Combine(installDir, service.RelativeInstallPath);
 
+        // Apply in-place source patches before launch (idempotent). See
+        // ServiceDefinition.SourceReplacements: AllTalk's script.py spawns its
+        // TTS engine via a bare `python` subprocess that misses the venv's
+        // torch; we rewrite it to sys.executable so the venv interpreter that
+        // runs script.py is reused. Done here (start), not only at install, so
+        // an already-installed copy is fixed without a reinstall.
+        foreach (var (relFile, edits) in service.SourceReplacements)
+        {
+            try
+            {
+                string filePath = Path.Combine(workingDir, relFile);
+                if (!File.Exists(filePath)) continue;
+                string original = File.ReadAllText(filePath);
+                string patched = original;
+                foreach (var kv in edits)
+                    patched = patched.Replace(kv.Key, kv.Value);
+                if (patched != original)
+                {
+                    File.WriteAllText(filePath, patched);
+                    OutputReceived?.Invoke(service.Id, $"Patched {relFile} to use the venv interpreter.");
+                }
+            }
+            catch (Exception ex)
+            {
+                OutputReceived?.Invoke(service.Id, $"Note: could not patch {relFile}: {ex.Message}");
+            }
+        }
+
         // Route through the per-service venv when one was provisioned at
         // install time. The presence of .venv/Scripts/python.exe is the
         // ground-truth signal — UsesVenv=true on a 0.9.8-era install that
