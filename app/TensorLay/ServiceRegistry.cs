@@ -268,7 +268,26 @@ public static class ServiceRegistry
             PythonInterpreterArgs = "-3.10",
             PreInstallCommands = new List<string>
             {
-                "-3.10 -m pip install --force-reinstall torch==2.3.1+cu121 torchaudio==2.3.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121"
+                // audiocraft is hard-pinned to the torch 2.1.0 family (torch==2.1.0,
+                // torchvision==0.16.0, torchtext==0.16.0, xformers<0.0.23). The old
+                // torch 2.3.1 pin here was wrong — the requirements step downgraded
+                // it back to 2.1.0 anyway, leaving an incoherent env. Install the
+                // 2.1.0 CUDA stack directly so requirements.txt is satisfied as-is.
+                "-3.10 -m pip install --force-reinstall torch==2.1.0+cu121 torchaudio==2.1.0+cu121 torchvision==0.16.0+cu121 --extra-index-url https://download.pytorch.org/whl/cu121",
+                // Relax three upstream pins that no longer resolve cleanly in 2026.
+                // setup.py reads requirements.txt for install_requires, so this single
+                // rewrite fixes BOTH the `pip install -r` step and the editable
+                // `pip install -e .` post-step.
+                //  • av==11.0.0 is the ONE av release with no Windows wheel → forces a
+                //    source build that needs MSVC. 12.x/13.x ship cp310 win wheels.
+                //  • transformers/gradio are upper-unbounded, so a fresh install pulls
+                //    transformers 5.x + gradio 6.x, which break audiocraft's Encodec
+                //    integration and its musicgen_app.py (gr.make_waveform + the
+                //    gradio-4 `sources=[...]` Audio API). Cap both to the last
+                //    compatible majors. The gradio range is the one pin not verifiable
+                //    from a Linux build host — narrow it from an install test if the
+                //    demo still errors on a gradio API mismatch.
+                "-3.10 -c \"f='requirements.txt';s=open(f,encoding='utf-8').read();s=s.replace('av==11.0.0','av>=12,<14').replace('transformers>=4.31.0','transformers>=4.31.0,<4.41').replace('gradio','gradio>=4.0,<4.37');open(f,'w',encoding='utf-8').write(s)\""
             },
             PostInstallCommands = new List<string>
             {
