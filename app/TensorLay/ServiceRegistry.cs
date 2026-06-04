@@ -311,49 +311,47 @@ public static class ServiceRegistry
         },
         new ServiceDefinition
         {
-            // Faster-Whisper (speaches) — speech-to-text with word/segment
-            // timestamps, OpenAI-compatible /v1/audio/transcriptions. Added
-            // for the video-dubbing pipeline (tools/dub/dub.py): it produces
-            // the timed transcript that ollama then translates and alltalk
+            // Faster-Whisper — speech-to-text with word/segment timestamps,
+            // OpenAI-compatible /v1/audio/transcriptions. Added for the
+            // video-dubbing pipeline (tools/dub/dub.py): it produces the timed
+            // transcript that ollama then translates and alltalk/f5-tts
             // re-voices in the cloned voice.
             //
-            // No requirements.txt: speaches is a pyproject/uv project, so the
-            // InstallerService requirements step is skipped (requirementsFile
-            // stays null) and we editable-install it in PostInstallCommands
-            // instead — same idiom as MusicGen's `pip install -e .`.
+            // Backend: github.com/papergallery/tensorlay-whisper — a ~60-line
+            // FastAPI server over faster-whisper + CTranslate2 (mirror of
+            // tools/whisper-server/ in this repo). It REPLACES speaches, whose
+            // unpinned kitchen-sink deps rotted against PyPI (onnx_asr import
+            // broke at startup). The repo ships a plain requirements.txt at
+            // root, so the InstallerService requirements step installs it
+            // automatically — no editable/PostInstall step.
             //
-            // No torch PreInstall: speaches transcribes via faster-whisper →
+            // No torch PreInstall: transcription runs on faster-whisper →
             // CTranslate2, NOT torch. CUDA acceleration comes from the
-            // nvidia-cublas/cudnn cu12 wheels that the editable install pulls
-            // in, so a torch pin would just bloat the venv by ~2 GB for
-            // nothing. (Contrast every other service here, which IS torch.)
+            // nvidia-cublas/cudnn cu12 wheels CT2 pulls in. The server warms
+            // up the GPU at startup and falls back to CPU int8 if CUDA is
+            // missing/broken, so it never crashes on a box without a working
+            // CUDA runtime. (Contrast every other service here, which IS torch.)
             //
-            // Entry point: speaches ships an app factory (confirmed against
-            // their Dockerfile CMD: `uvicorn --factory speaches.main:create_app`).
-            // --port pins 9000 (clear of 7860/7861/7862/7863/7851/8188/11434),
-            // overriding their default UVICORN_PORT=8000. Health: /health.
-            // First transcription downloads the large-v3 model (~3 GB) on
-            // demand, so the initial call is slow.
+            // Entry point: uvicorn server:app (server.py lives at repo root).
+            // --port pins 9000 (clear of 7860/7861/7862/7863/7851/8188/11434).
+            // Health: /health. First transcription downloads large-v3 (~3 GB)
+            // on demand, so the initial call is slow.
             //
-            // Python 3.12 is REQUIRED: speaches pins `requires-python ==3.12.*`
-            // in pyproject — 3.11 or 3.13 fail the editable install. py.exe
-            // must therefore have a 3.12 available (`py -0` to verify).
+            // Python 3.12 pin: CTranslate2 4.7.2 ships wheels up to cp312, so
+            // we keep -3.12 to guarantee a wheel exists (a 3.13 box would have
+            // none). py.exe must have a 3.12 available (`py -0` to verify).
             Id = "whisper",
             DisplayName = "Faster-Whisper",
             Port = 9000,
             VramMb = 3000,
             Category = "audio",
             HealthEndpoint = "/health",
-            GitRepoUrl = "https://github.com/speaches-ai/speaches.git",
+            GitRepoUrl = "https://github.com/papergallery/tensorlay-whisper.git",
             RelativeInstallPath = "whisper",
             PythonExecutable = "py",
             PythonInterpreterArgs = "-3.12",
-            PostInstallCommands = new List<string>
-            {
-                "-m pip install -e ."
-            },
             StartExecutable = "py",
-            StartArguments = "-3.12 -m uvicorn --factory speaches.main:create_app --host 127.0.0.1 --port 9000",
+            StartArguments = "-3.12 -m uvicorn server:app --host 127.0.0.1 --port 9000",
             ModelsSubfolder = "",   // models cached in HF_HOME on first request
             UseSystemInstaller = false,
             UsesVenv = true
@@ -366,17 +364,37 @@ public static class ServiceRegistry
             // hallucinations). License is CC-BY-NC — non-commercial only, fine
             // for the clan's own channel content.
             //
-            // Same no-requirements.txt pattern as the whisper entry above:
-            // F5-TTS is a pyproject package, so we editable-install it in
-            // PostInstallCommands. torch IS needed here (the model runs on
-            // torch), so we keep the cu121 PreInstall pin like the rest.
+            // PINNED to f5-tts==1.1.9 (the last release BEFORE the torchcodec
+            // dependency landed — torchcodec was added in 1.1.15). This is
+            // deliberate: F5-TTS main now hard-depends on `torchcodec`, whose
+            // first Windows wheel is 0.7.0 and that in turn needs torch 2.8
+            // (no cu121 build exists) PLUS system FFmpeg shared DLLs on PATH —
+            // an external dependency pip can't satisfy. Pinning 1.1.9 keeps the
+            // whole thing on our coherent torch 2.3.1+cu121 stack with zero
+            // torchcodec and zero FFmpeg requirement. Verified end-to-end on
+            // the VPS: the dep graph resolves with NO torchcodec and
+            // `import f5_tts.infer.infer_gradio` succeeds.
             //
-            // Entry point: the repo's gradio demo lives at
-            // f5_tts.infer.infer_gradio; `-m` runs its __main__. It takes
-            // --port/--host. If a future release renames the module, the pip
-            // console script `f5-tts_infer-gradio` is the fallback target.
-            // GRADIO_SERVER_* env mirrors the TripoSR/MusicGen routing so the
-            // demo binds 127.0.0.1:7863 even if the CLI flags are ignored.
+            // We still git-clone the repo (so the installer's no-GitRepoUrl
+            // early-return doesn't skip the whole Python pipeline), but install
+            // the PINNED PyPI wheel in PostInstall instead of `pip install -e .`
+            // off the clone. F5-TTS is src-layout (src/f5_tts), so the cloned
+            // main tree does NOT shadow the installed 1.1.9 at runtime when
+            // `-m f5_tts...` runs from the clone root.
+            //
+            // The PreInstall pins matter: 1.1.9's own constraints are loose
+            // (gradio>=5.0.0, transformers unbounded, numpy uncapped on >3.10),
+            // so without these pip would pull gradio 6 (API break vs 1.1.9's
+            // demo), transformers 5.x (which DISABLES torch <2.4 — silently
+            // breaks model loading on our 2.3.1), and numpy 2 (torch 2.3.1 was
+            // built against numpy 1). Pinning them first makes the f5-tts
+            // install keep these versions. All have Windows wheels (verified:
+            // bitsandbytes 0.49.2, torch/torchaudio 2.3.1+cu121 cp310 win).
+            //
+            // Entry point: the gradio demo lives at f5_tts.infer.infer_gradio;
+            // `-m` runs its __main__. It takes --port/--host. GRADIO_SERVER_*
+            // env mirrors the TripoSR/MusicGen routing so the demo binds
+            // 127.0.0.1:7863 even if the CLI flags are ignored.
             Id = "f5-tts",
             DisplayName = "F5-TTS",
             Port = 7863,
@@ -389,11 +407,12 @@ public static class ServiceRegistry
             PythonInterpreterArgs = "-3.10",
             PreInstallCommands = new List<string>
             {
-                "-3.10 -m pip install --force-reinstall torch==2.3.1+cu121 torchaudio==2.3.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121"
+                "-3.10 -m pip install --force-reinstall torch==2.3.1+cu121 torchaudio==2.3.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121",
+                "-3.10 -m pip install \"numpy<2\" \"transformers>=4.40,<5\" \"gradio>=5.0,<6\""
             },
             PostInstallCommands = new List<string>
             {
-                "-m pip install -e ."
+                "-m pip install \"f5-tts==1.1.9\""
             },
             EnvironmentVariables = new Dictionary<string, string>
             {
