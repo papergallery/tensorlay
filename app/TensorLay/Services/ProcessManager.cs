@@ -51,6 +51,7 @@ public class ProcessManager : IDisposable
         // would be rejected by venv python as an unknown flag.
         string startExe = service.StartExecutable;
         string startArgs = service.StartArguments;
+        string? venvDir = null;
         if (service.UsesVenv)
         {
             string venvPython = Path.Combine(workingDir, ".venv", "Scripts", "python.exe");
@@ -58,6 +59,7 @@ public class ProcessManager : IDisposable
             {
                 startExe = venvPython;
                 startArgs = StripVersionSelector(startArgs);
+                venvDir = Path.Combine(workingDir, ".venv");
             }
             else
             {
@@ -88,6 +90,26 @@ public class ProcessManager : IDisposable
         {
             if (string.IsNullOrEmpty(kv.Key)) continue;
             psi.EnvironmentVariables[kv.Key] = kv.Value;
+        }
+
+        // Activate the venv for the child process. Launching <venv>/Scripts/
+        // python.exe directly runs the right interpreter, but it does NOT put
+        // the venv on PATH — so any service that shells out to a BARE `python`
+        // or `pip` from its own code gets a global interpreter instead. AllTalk
+        // is the case in point: script.py spawns its TTS engine via
+        // subprocess.Popen(["python", "tts_server.py"]) (and modeldownload.py
+        // the same way), so without activation that subprocess dies with
+        // "ModuleNotFoundError: No module named 'torch'" even though torch is in
+        // the venv — and AllTalk just reports "TTS Subprocess has NOT started up"
+        // until it times out. Mirror `activate`: prepend <venv>/Scripts to PATH
+        // and set VIRTUAL_ENV (+ clear PYTHONHOME, which would override it).
+        if (venvDir is not null)
+        {
+            string scriptsDir = Path.Combine(venvDir, "Scripts");
+            string existingPath = psi.EnvironmentVariables["PATH"] ?? "";
+            psi.EnvironmentVariables["PATH"] = scriptsDir + Path.PathSeparator + existingPath;
+            psi.EnvironmentVariables["VIRTUAL_ENV"] = venvDir;
+            psi.EnvironmentVariables.Remove("PYTHONHOME");
         }
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
