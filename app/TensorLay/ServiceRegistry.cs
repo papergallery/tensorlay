@@ -489,7 +489,17 @@ public static class ServiceRegistry
                 { "GRADIO_SERVER_NAME", "127.0.0.1" },
             },
             StartExecutable = "py",
-            StartArguments = "-3.10 -m f5_tts.infer.infer_gradio --port 7863 --host 127.0.0.1",
+            // DIAGNOSTIC launch: F5-TTS hangs at import on some Windows/GPU
+            // boxes (silent after the google.api_core warning, before
+            // utils_infer's "Download Vocos" print) — a hang the Linux/CPU VPS
+            // can't reproduce. Wrap the module run in a faulthandler watchdog:
+            // if startup hasn't progressed past whatever it's stuck on in 120s,
+            // it dumps every thread's stack to stderr (visible via
+            // PYTHONUNBUFFERED) and KEEPS running (exit=False) — pinpointing the
+            // exact hanging line instead of guessing. sys.argv carries the
+            // gradio --port/--host through runpy. Revert to a plain
+            // `-m f5_tts.infer.infer_gradio` once the hang is fixed.
+            StartArguments = "-3.10 -c \"import faulthandler,sys,runpy;faulthandler.dump_traceback_later(120,exit=False);sys.argv=['f5-tts','--port','7863','--host','127.0.0.1'];runpy.run_module('f5_tts.infer.infer_gradio',run_name='__main__')\"",
             ModelsSubfolder = "",   // F5-TTS pulls checkpoints from HF on demand
             UseSystemInstaller = false,
             UsesVenv = true
