@@ -108,6 +108,16 @@ public class ProcessManager : IDisposable
             CreateNoWindow = true
         };
 
+        // Force unbuffered stdout/stderr for the child. Python BLOCK-buffers
+        // stdout when it's a pipe (which RedirectStandardOutput makes it), so a
+        // service that prints progress to stdout — F5-TTS streams "Download
+        // Vocos..." then a multi-minute model download, then "Starting app..."
+        // — shows NOTHING in our Logs view until it exits or the buffer fills.
+        // That reads as a hang/crash when the service is actually working. With
+        // PYTHONUNBUFFERED the output streams live. Harmless for non-Python
+        // services (they ignore it).
+        psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+
         // Per-service environment variables (added in 0.9.11). Used by:
         //   TripoSR    GRADIO_SERVER_PORT=7862  (gradio_app.py honors it)
         //   MusicGen   GRADIO_SERVER_PORT=7861  (audiocraft demo, same)
