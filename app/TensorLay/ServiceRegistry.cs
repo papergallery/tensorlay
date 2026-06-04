@@ -207,6 +207,25 @@ public static class ServiceRegistry
             // Health: AllTalk exposes /api/ready for readiness, /api/voices
             // for inventory. /api/ready is the right liveness probe — the
             // server can be up but model-loading for ~30s on first start.
+            //
+            // WINDOWS-WHEEL FIX (RequirementsReplacements below): AllTalk's
+            // requirements_standalone.txt pins `TTS==0.22.0` (coqui, archived)
+            // and `av==11.0.0`, NEITHER of which has a Windows wheel — TTS
+            // compiles a Cython monotonic_align ext and av builds PyAV from
+            // source, both needing MSVC C++ Build Tools the user doesn't have
+            // (the install died exactly here). We swap TTS -> coqui-tts==0.25.3
+            // (the maintained idiap fork; first pure-wheel release, uses the
+            // wheeled monotonic-alignment-search instead of compiling) and
+            // av -> av>=12 (first av with win wheels, pulled via faster-whisper
+            // which we also bump to 1.2.1 since 1.0.1 pinned av==11). coqui-tts
+            // 0.25.3's newer floors then force a small cascade: transformers
+            // 4.39.1 -> 4.46.2 (still <5 so it doesn't disable torch 2.3.1),
+            // num2words/gruut/tensorboard bumps, and dropping the now-stale
+            // tokenizers/huggingface-hub/gruut-lang/trainer pins so the
+            // resolver picks coherent versions. Verified end-to-end on a VPS
+            // py3.11 venv: resolves, installs, `from TTS.api import TTS` +
+            // XTTS model class import OK, torch stays available. All bumped
+            // packages have Windows wheels (or are pure-python).
             Id = "alltalk",
             DisplayName = "AllTalk TTS",
             Port = 7851,
@@ -218,13 +237,38 @@ public static class ServiceRegistry
             PythonExecutable = "py",
             PythonInterpreterArgs = "-3.11",
             RequirementsFileName = "system/requirements/requirements_standalone.txt",
+            RequirementsReplacements = new Dictionary<string, string>
+            {
+                // swaps (no Windows wheel -> maintained drop-in)
+                { "tts",            "coqui-tts==0.25.3" },
+                { "av",             "av>=12.0.0,<13" },
+                { "faster-whisper", "faster-whisper==1.2.1" },
+                // cascade bumps coqui-tts 0.25.3 / transformers 4.46 require
+                { "transformers",   "transformers==4.46.2" },
+                { "num2words",      "num2words==0.5.14" },
+                { "gruut",          "gruut>=2.4.0" },
+                { "tensorboard",    "tensorboard>=2.17.0" },
+                // stale pins dropped -> resolver picks coherent transitive versions
+                { "tokenizers",     "" },
+                { "huggingface-hub","" },
+                { "gruut-ipa",      "" },
+                { "gruut-lang-de",  "" },
+                { "gruut-lang-en",  "" },
+                { "gruut-lang-es",  "" },
+                { "gruut-lang-fr",  "" },
+                { "trainer",        "" },
+            },
             PreInstallCommands = new List<string>
             {
                 // Same +cu121 pinning idiom as Forge. AllTalk's
                 // requirements_standalone lists `torch` unpinned, so a
                 // plain pip would resolve to the CPU wheel and XTTS
                 // synthesis would crawl. Pre-pin to fix the resolution.
-                "-3.11 -m pip install --force-reinstall torch==2.3.1+cu121 torchaudio==2.3.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121"
+                "-3.11 -m pip install --force-reinstall torch==2.3.1+cu121 torchaudio==2.3.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121",
+                // setuptools<81 keeps pkg_resources available — coqui-tts
+                // 0.25.3 imports it at runtime, and setuptools >=81 removed it
+                // (import TTS.api would crash with ModuleNotFoundError).
+                "-3.11 -m pip install \"setuptools<81\""
             },
             EnvironmentVariables = new Dictionary<string, string>
             {

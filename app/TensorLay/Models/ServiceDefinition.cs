@@ -82,4 +82,17 @@ public class ServiceDefinition
     //            blocks the gradio app at first marching-cubes call)
     // Empty list = no-op, fully optional.
     public List<string> PostInstallCommands { get; init; } = new();
+
+    // Line-level overrides applied to the cloned requirements*.txt BEFORE the
+    // `pip install -r` step. Keyed by NORMALIZED package name (lowercase, '_'
+    // -> '-', no version spec) so they survive upstream version bumps in the
+    // fetched file. The value is the full replacement requirement line; an
+    // EMPTY value drops the line entirely (lets the resolver pick a coherent
+    // version transitively). Used by AllTalk to swap packages that have no
+    // Windows wheel for maintained drop-ins:
+    //   TTS==0.22.0 (compiles monotonic_align Cython ext, no win wheel) ->
+    //     coqui-tts (pure-wheel fork) + the transformers/tokenizers/hub bump
+    //     its newer floor requires, and av==11 (no win wheel) -> av>=12.
+    // Unmatched keys are logged as a warning (signals the upstream file drifted).
+    public Dictionary<string, string> RequirementsReplacements { get; init; } = new();
 }

@@ -101,6 +101,54 @@ public class InstallerService : IDisposable
                     }
                 }
             }
+            // Apply per-service requirements overrides to the cloned file
+            // BEFORE pip runs. Matches by normalized package name so it
+            // survives upstream version bumps; an empty replacement drops the
+            // line (lets the resolver pick a transitive version). AllTalk uses
+            // this to swap TTS==0.22.0 / av==11 (no Windows wheels → compile,
+            // need MSVC) for coqui-tts / av>=12 plus the dependency-floor bumps
+            // those pull in. No-op when the map is empty.
+            if (requirementsFile is not null && service.RequirementsReplacements.Count > 0)
+            {
+                string reqPath = Path.Combine(targetPath, requirementsFile);
+                var rewritten = new List<string>();
+                var applied = new HashSet<string>();
+                foreach (var line in File.ReadAllLines(reqPath))
+                {
+                    string trimmed = line.Trim();
+                    if (trimmed.Length == 0 || trimmed.StartsWith("#"))
+                    {
+                        rewritten.Add(line);
+                        continue;
+                    }
+                    string pkg = NormalizePackageName(trimmed);
+                    if (service.RequirementsReplacements.TryGetValue(pkg, out var replacement))
+                    {
+                        applied.Add(pkg);
+                        if (!string.IsNullOrEmpty(replacement))
+                        {
+                            rewritten.Add(replacement);
+                            InstallLog?.Invoke(service.Id, $"Requirements override: {trimmed} -> {replacement}");
+                        }
+                        else
+                        {
+                            InstallLog?.Invoke(service.Id, $"Requirements override: dropped {trimmed}");
+                        }
+                    }
+                    else
+                    {
+                        rewritten.Add(line);
+                    }
+                }
+                foreach (var key in service.RequirementsReplacements.Keys)
+                {
+                    if (!applied.Contains(key))
+                        InstallLog?.Invoke(service.Id,
+                            $"WARNING: requirements override for '{key}' matched nothing — upstream {requirementsFile} may have changed.");
+                }
+                File.WriteAllLines(reqPath, rewritten);
+            }
+
             // Run the Python install pipeline (venv + Pre/PostInstall) whenever
             // the service does ANY Python work — not only when a requirements.txt
             // exists. pyproject-only services (speaches/whisper, F5-TTS) ship no
@@ -604,6 +652,22 @@ public class InstallerService : IDisposable
     {
         if (string.IsNullOrEmpty(args)) return args;
         return System.Text.RegularExpressions.Regex.Replace(args, @"^-3\.\d+\s+", "");
+    }
+
+    // PEP 503 normalized project name from a requirement line: the token before
+    // any version/marker/extra delimiter, lowercased with '_'/'.' -> '-'. Used
+    // to match RequirementsReplacements by package regardless of the pinned
+    // version in the fetched requirements file.
+    internal static string NormalizePackageName(string requirementLine)
+    {
+        int end = requirementLine.Length;
+        foreach (char c in new[] { '=', '<', '>', '!', '~', ';', '[', ' ', '\t', '@' })
+        {
+            int i = requirementLine.IndexOf(c);
+            if (i >= 0 && i < end) end = i;
+        }
+        return requirementLine.Substring(0, end).Trim().ToLowerInvariant()
+            .Replace('_', '-').Replace('.', '-');
     }
 
     private static void EnsureOnPath(string exe, string friendlyName, string installUrl)
