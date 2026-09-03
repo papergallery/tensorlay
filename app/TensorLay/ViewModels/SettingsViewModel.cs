@@ -69,6 +69,24 @@ public partial class SettingsViewModel : ViewModelBase
         RemoteInstallSupported = !string.IsNullOrEmpty(settings.RemoteTasksToken);
     }
 
+    /// <summary>
+    /// Re-read only the fields /pair rewrites (host, user, key path, port,
+    /// autoconnect, relay capability). Called after a successful Re-pair…
+    /// from this window; leaves the user's unsaved edits to the other
+    /// fields alone.
+    /// </summary>
+    public void ReloadAfterPairing()
+    {
+        var settings = _settingsService.Load();
+        VpsHost = settings.VpsHost;
+        VpsUser = settings.VpsUser;
+        SshKeyPath = settings.SshKeyPath;
+        SshPort = settings.SshPort;
+        AutoconnectTunnel = settings.AutoconnectTunnel;
+        RemoteInstallSupported = !string.IsNullOrEmpty(settings.RemoteTasksToken);
+        ConnectionTestResult = "";
+    }
+
     [RelayCommand]
     private void Save()
     {

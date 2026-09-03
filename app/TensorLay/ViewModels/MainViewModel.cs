@@ -318,7 +318,7 @@ public partial class MainViewModel : ViewModelBase
     private async Task OpenSettings()
     {
         bool wasPolling = _remoteTaskService.IsRunning;
-        var window = new Views.SettingsWindow(_settingsService);
+        var window = new Views.SettingsWindow(_settingsService, RepairFromSettings);
         if (window.ShowDialog() != true) return;
 
         // Settings was saved (Save button, not Cancel) — reconcile the
@@ -331,6 +331,31 @@ public partial class MainViewModel : ViewModelBase
             _remoteTaskService.StartPolling();
         else if (!shouldPoll && wasPolling)
             await _remoteTaskService.StopPolling().ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Re-pair from Settings (v0.9.26). The tunnel pins the VPS host-key
+    /// fingerprints captured at /pair time, so once the relay moves to a
+    /// new server (or the server rotates its SSH host keys) every connect
+    /// fails with HOST KEY MISMATCH and only a fresh handshake fixes it.
+    /// A live tunnel belongs to the old pairing — drop it first. Returns
+    /// true when the pairing dialog completed successfully.
+    /// </summary>
+    private async Task<bool> RepairFromSettings(System.Windows.Window owner)
+    {
+        if (IsTunnelConnected)
+            await DisconnectTunnel();
+
+        var pairing = new Views.PairingWindow(_pairingService, _sshKeyService, _settingsService)
+        {
+            Owner = owner,
+        };
+        if (pairing.ShowDialog() != true)
+            return false;
+
+        IsPaired = true;
+        await ConnectTunnel();
+        return true;
     }
 
     [RelayCommand]

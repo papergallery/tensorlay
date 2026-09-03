@@ -3,6 +3,10 @@
 # Usage: ./publish.sh [version]
 
 set -e
+# pipefail: every build/sign step is piped through `tail -3`; without this a
+# failed dotnet publish would be masked and the previous exe re-signed and
+# shipped under the new version number.
+set -o pipefail
 
 VERSION="${1:-$(grep '<Version>' TensorLay/TensorLay.csproj | sed 's/.*<Version>\(.*\)<\/Version>.*/\1/')}"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -26,8 +30,10 @@ $DOTNET publish TensorLay/TensorLay.csproj -c Release -r win-x64 --self-containe
     -o "$PUBLISH_DIR" 2>&1 | tail -3
 
 # 3. Sign exe
+# -h sha256: osslsigncode 2.2 (Ubuntu 22.04 apt) still defaults to a SHA1
+# Authenticode digest; every release up to 0.9.25 was SHA256 — keep it so.
 echo "[+] Signing exe..."
-osslsigncode sign \
+osslsigncode sign -h sha256 \
     -certs "$CERT_DIR/gpuhub_cert.pem" \
     -key "$CERT_DIR/gpuhub_key.pem" \
     -n "TensorLay" \
@@ -42,7 +48,7 @@ echo "[+] Building installer..."
 makensis -V2 installer.nsi 2>&1 | tail -3
 
 # 5. Sign installer
-osslsigncode sign \
+osslsigncode sign -h sha256 \
     -certs "$CERT_DIR/gpuhub_cert.pem" \
     -key "$CERT_DIR/gpuhub_key.pem" \
     -n "TensorLay Setup" \

@@ -235,7 +235,7 @@ public class SshTunnelService : IDisposable
         TunnelLog?.Invoke(
             $"HOST KEY MISMATCH — refusing to connect. " +
             $"Server presented {observed}, pinned set: [{string.Join(", ", pinned)}]. " +
-            $"If you intentionally rotated SSH host keys on the VPS, re-pair from Settings.");
+            $"If you moved the relay to a new VPS or rotated its SSH host keys, open Settings → Re-pair…");
         e.CanTrust = false;
     }
 

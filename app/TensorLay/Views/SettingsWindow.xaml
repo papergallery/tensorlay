@@ -78,6 +78,29 @@
                         <TextBox Text="{Binding SshKeyPath, UpdateSourceTrigger=PropertyChanged}"/>
                     </DockPanel>
 
+                    <!-- Pairing (v0.9.26+). The tunnel pins the VPS host-key
+                         fingerprints captured at /pair time and refuses anything
+                         else, so after the relay moves to a new server (or the
+                         server rotates its SSH host keys) every connect ends in
+                         HOST KEY MISMATCH. Before 0.9.26 the only way out was
+                         editing settings.json by hand. -->
+                    <TextBlock Text="PAIRING" FontSize="10" FontWeight="SemiBold" Foreground="#9B9B9B"
+                               Margin="0,0,0,6"/>
+                    <DockPanel LastChildFill="True" Margin="0,0,0,20">
+                        <Button DockPanel.Dock="Right" Content="Re-pair…"
+                                Style="{StaticResource SecondaryButton}"
+                                Padding="14,7" Margin="12,0,0,0"
+                                VerticalAlignment="Top"
+                                Foreground="#6C5CE7" BorderBrush="#6C5CE720"
+                                Click="OnRepairClicked"/>
+                        <TextBlock FontSize="11" Foreground="#9B9B9B" TextWrapping="Wrap"
+                                   VerticalAlignment="Center">
+                            Run the pairing handshake again with a fresh code from the VPS.
+                            Use it after the relay moved to a new server or its SSH host
+                            keys changed (the tunnel log says HOST KEY MISMATCH).
+                        </TextBlock>
+                    </DockPanel>
+
                     <!-- Install Directory -->
                     <TextBlock Text="INSTALL DIRECTORY" FontSize="10" FontWeight="SemiBold" Foreground="#9B9B9B"
                                Margin="0,0,0,6"/>
