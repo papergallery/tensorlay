@@ -19,6 +19,13 @@ public partial class MainViewModel : ViewModelBase
     private readonly PairingService _pairingService;
     private readonly SshKeyService _sshKeyService;
     private readonly RemoteTaskService _remoteTaskService;
+    private readonly RemoteCleanupService _remoteCleanupService;
+    private readonly ModelDeletionService _modelDeletionService;
+    // One deletion window at a time — same pattern as remote install
+    // approvals. Agent requests queue while a window is open; local Delete
+    // clicks share the slot so the two kinds never stack on top of each other.
+    private readonly Queue<RemoteDeletionRequest> _pendingDeletions = new();
+    private Views.ModelDeletionWindow? _openDeletionWindow;
     // FIFO queue for tasks that arrive while another approval modal is open.
     // Drained one-at-a-time on each DecisionMade event, so a burst of agent
     // submissions doesn't pile up overlapping windows.
@@ -103,7 +110,9 @@ public partial class MainViewModel : ViewModelBase
         SshTunnelService sshTunnelService,
         PairingService pairingService,
         SshKeyService sshKeyService,
-        RemoteTaskService remoteTaskService)
+        RemoteTaskService remoteTaskService,
+        RemoteCleanupService remoteCleanupService,
+        ModelDeletionService modelDeletionService)
     {
         _processManager = processManager;
         _healthCheckService = healthCheckService;
@@ -115,6 +124,8 @@ public partial class MainViewModel : ViewModelBase
         _pairingService = pairingService;
         _sshKeyService = sshKeyService;
         _remoteTaskService = remoteTaskService;
+        _remoteCleanupService = remoteCleanupService;
+        _modelDeletionService = modelDeletionService;
 
         var s = settingsService.Load();
         IsPaired = s.IsPaired;
@@ -132,7 +143,12 @@ public partial class MainViewModel : ViewModelBase
                 _installerService,
                 _modelDownloader,
                 _settingsService);
+            vm.DeleteModelRequested += (svc, model) => RequestModelDeletion(model);
             Services.Add(vm);
+            // Populate the Models page at startup — before v0.9.27 the list
+            // only filled after a download finished in the current session.
+            if (vm.State != ServiceState.NotInstalled)
+                vm.RefreshModels();
         }
 
         _gpuMonitor.GpuInfoUpdated += OnGpuInfoUpdated;
@@ -143,6 +159,9 @@ public partial class MainViewModel : ViewModelBase
 
         _remoteTaskService.TaskReceived += OnRemoteTaskReceived;
         _remoteTaskService.RemoteTaskLog += msg => RunOnUI(() => AddLog($"[remote] {msg}"));
+
+        _remoteCleanupService.DeletionReceived += OnDeletionReceived;
+        _remoteCleanupService.Log += msg => RunOnUI(() => AddLog($"[cleanup] {msg}"));
 
         // Start polling only if pairing + supported relay + user opt-in all
         // line up. Settings toggle changes call StartRemotePolling/StopRemotePolling
@@ -189,6 +208,79 @@ public partial class MainViewModel : ViewModelBase
             ShowNextRemoteTaskIfIdle();
         };
         window.Show();   // non-modal so other UI stays responsive while a download runs
+    }
+
+    private void OnDeletionReceived(RemoteDeletionRequest request)
+    {
+        RunOnUI(() =>
+        {
+            _pendingDeletions.Enqueue(request);
+            ShowNextDeletionIfIdle();
+        });
+    }
+
+    private void ShowNextDeletionIfIdle()
+    {
+        if (_openDeletionWindow is not null || _pendingDeletions.Count == 0) return;
+
+        var request = _pendingDeletions.Dequeue();
+
+        var vm = ModelDeletionViewModel.ForRemoteRequest(_modelDeletionService, _remoteCleanupService, request);
+        vm.Finished += OnDeletionsApplied;
+        var window = new Views.ModelDeletionWindow(vm)
+        {
+            Owner = System.Windows.Application.Current.MainWindow,
+        };
+        window.Closed += (_, _) =>
+        {
+            vm.Finished -= OnDeletionsApplied;
+            _openDeletionWindow = null;
+            ShowNextDeletionIfIdle();
+        };
+        _openDeletionWindow = window;
+        window.Show();   // non-modal, like install approvals
+    }
+
+    // Delete button on the Models page / service card: same window and code
+    // path as a remote request, with a single pre-selected item.
+    public void RequestModelDeletion(ModelInfo model)
+    {
+        // A deletion window is already up (usually an agent request): finish
+        // that one first.
+        if (_openDeletionWindow is not null)
+        {
+            _openDeletionWindow.Activate();
+            return;
+        }
+
+        var vm = ModelDeletionViewModel.ForLocalModel(_modelDeletionService, model);
+        vm.Finished += OnDeletionsApplied;
+        var window = new Views.ModelDeletionWindow(vm)
+        {
+            Owner = System.Windows.Application.Current.MainWindow,
+        };
+        _openDeletionWindow = window;
+        try
+        {
+            window.ShowDialog();
+        }
+        finally
+        {
+            vm.Finished -= OnDeletionsApplied;
+            _openDeletionWindow = null;
+        }
+        ShowNextDeletionIfIdle();   // a remote request may have queued meanwhile
+    }
+
+    private void OnDeletionsApplied(IReadOnlyCollection<string> touchedServiceIds)
+    {
+        if (touchedServiceIds.Count == 0) return;
+        _remoteCleanupService.MarkInventoryDirty();
+        RunOnUI(() =>
+        {
+            foreach (var svc in Services.Where(s => touchedServiceIds.Contains(s.Definition.Id)))
+                svc.RefreshModels();
+        });
     }
 
     private void OnGpuInfoUpdated(GpuInfo info)

@@ -35,6 +35,7 @@ public partial class App : Application
     private ModelDownloader? _modelDownloader;
     private RemoteTaskService? _remoteTaskService;
     private RemoteLogService? _remoteLogService;
+    private RemoteCleanupService? _remoteCleanupService;
     private GpuMonitor? _gpuMonitor;
     private SshTunnelService? _sshTunnelService;
     private AccountService? _accountService;
@@ -164,6 +165,11 @@ public partial class App : Application
         // PollOnce so toggling it doesn't require a restart.
         _remoteLogService = new RemoteLogService(settingsService);
         _remoteLogService.StartPolling();
+        // Remote model cleanup (inventory push + deletion requests). Same
+        // always-on loop with a per-poll AllowRemoteModelCleanup check.
+        _remoteCleanupService = new RemoteCleanupService(settingsService, _modelDownloader);
+        _remoteCleanupService.StartPolling();
+        var modelDeletionService = new ModelDeletionService(_modelDownloader, settingsService);
 
         var pairingService = new PairingService();
         var sshKeyService = new SshKeyService();
@@ -178,7 +184,9 @@ public partial class App : Application
             _sshTunnelService,
             pairingService,
             sshKeyService,
-            _remoteTaskService);
+            _remoteTaskService,
+            _remoteCleanupService,
+            modelDeletionService);
 
         mainVm.Initialize();
 
@@ -240,6 +248,7 @@ public partial class App : Application
         _healthCheckService?.Dispose();
         _remoteTaskService?.Dispose();
         _remoteLogService?.Dispose();
+        _remoteCleanupService?.Dispose();
         _modelDownloader?.Dispose();
         _gpuMonitor?.Dispose();
         _sshTunnelService?.Dispose();

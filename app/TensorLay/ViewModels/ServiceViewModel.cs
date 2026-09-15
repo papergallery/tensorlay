@@ -71,7 +71,11 @@ public partial class ServiceViewModel : ViewModelBase
         {
             if (State == ServiceState.Starting || State == ServiceState.Running)
             {
+                bool becameRunning = isHealthy && State != ServiceState.Running;
                 State = isHealthy ? ServiceState.Running : ServiceState.Starting;
+                // Ollama's list is only readable while it runs; for the rest
+                // this also catches models added while the service was down.
+                if (becameRunning) RefreshModels();
                 UpdateStatusText();
                 StartCommand.NotifyCanExecuteChanged();
                 StopCommand.NotifyCanExecuteChanged();
@@ -332,52 +336,38 @@ public partial class ServiceViewModel : ViewModelBase
         return Task.CompletedTask;
     }
 
-    [RelayCommand]
-    private async Task DeleteModel(ModelInfo model)
-    {
-        // Ollama models live as SHA-named blobs behind its HTTP API, not at
-        // a path we can File.Delete. Route through /api/delete; only remove
-        // from the UI list if the daemon confirms 2xx.
-        if (Definition.Id == "ollama")
-        {
-            bool ok = await _modelDownloader.DeleteOllamaModelAsync(model.FileName, Definition.Port).ConfigureAwait(true);
-            if (ok) Models.Remove(model);
-            return;
-        }
+    // Raised when the user clicks a model's delete button. MainViewModel
+    // handles it with the same confirmation window and deletion code path
+    // used for remote cleanup requests, then refreshes this list.
+    public event Action<ServiceViewModel, ModelInfo>? DeleteModelRequested;
 
+    [RelayCommand]
+    private void DeleteModel(ModelInfo model) => DeleteModelRequested?.Invoke(this, model);
+
+    // Reloads Models from disk (or from Ollama's API) off the UI thread; the
+    // collection itself is only touched on the UI thread.
+    public void RefreshModels() => _ = RefreshModelsAsync();
+
+    private async Task RefreshModelsAsync()
+    {
+        List<ModelInfo> list;
         try
         {
-            if (File.Exists(model.FullPath))
-                File.Delete(model.FullPath);
-            Models.Remove(model);
+            // Ollama models live behind its HTTP API, not in a models folder.
+            list = Definition.Id == "ollama"
+                ? await _modelDownloader.GetOllamaModelsAsync(Definition.Port).ConfigureAwait(false)
+                : await Task.Run(() => _modelDownloader.GetModelsForService(
+                    Definition, _settingsService.Load().InstallDirectory)).ConfigureAwait(false);
         }
-        catch { /* ignore delete errors */ }
-    }
-
-    public void RefreshModels()
-    {
-        // Ollama models live behind its HTTP API, not in our ModelsSubfolder.
-        // Fire an async refresh and bail; the populated list is marshaled
-        // back to the UI thread when the API call returns.
-        if (Definition.Id == "ollama")
+        catch
         {
-            _ = RefreshOllamaModelsAsync();
             return;
         }
 
-        var list = _modelDownloader.GetModelsForService(Definition, _settingsService.Load().InstallDirectory);
-        Models.Clear();
-        foreach (var m in list)
-            Models.Add(m);
-    }
-
-    private async Task RefreshOllamaModelsAsync()
-    {
-        var list = await _modelDownloader.GetOllamaModelsAsync(Definition.Port).ConfigureAwait(false);
         RunOnUI(() =>
         {
             Models.Clear();
-            foreach (var m in list)
+            foreach (var m in list.OrderBy(m => m.FileName, StringComparer.OrdinalIgnoreCase))
                 Models.Add(m);
         });
     }

@@ -73,7 +73,8 @@ public partial class MainWindow : Window
                 ServiceName = s.Definition.DisplayName,
                 FileName    = m.FileName,
                 DisplaySize = m.DisplaySize,
-                FullPath    = m.FullPath
+                FullPath    = m.FullPath,
+                Model       = m,
             }))
             .ToList();
 
@@ -104,6 +105,13 @@ public partial class MainWindow : Window
         Application.Current.Shutdown();
     }
 
+    // Delete on a Models-page row (Home and Models pages share the template).
+    private void OnDeleteModelClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: FlatModelItem item } && item.Model is not null)
+            _viewModel?.RequestModelDeletion(item.Model);
+    }
+
     // The ⋯ overflow button next to each service row drops its ContextMenu
     // on a plain left-click. Without this WPF would only open the menu on
     // right-click, which isn't discoverable.
@@ -129,4 +137,5 @@ internal sealed class FlatModelItem
     public string FileName    { get; init; } = "";
     public string DisplaySize { get; init; } = "";
     public string FullPath    { get; init; } = "";
+    public ModelInfo? Model   { get; init; }
 }

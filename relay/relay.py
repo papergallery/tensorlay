@@ -41,7 +41,7 @@ except ImportError:
 
 # ── Constants ─────────────────────────────────────────────────────────────
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 DATA_DIR = Path("/opt/tensorlay-relay")
 PAIRING_CODE_FILE = DATA_DIR / "pairing_code"
 SERVICE_TOKEN_FILE = DATA_DIR / "service_token"
@@ -58,6 +58,26 @@ CONFIG_FILE = DATA_DIR / "config.yaml"
 # lets the admin tail/grep them with regular Unix tools.
 LOGS_DIR = DATA_DIR / "logs"
 MAX_LOG_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB cap on each upload
+
+# v1.6.0 — model inventory + remote model deletion. The desktop pushes a JSON
+# snapshot of the model files it can see (per service, relative to the
+# service's models root, plus Ollama tags and free disk space); agents read it
+# and submit deletion requests that the user approves item-by-item on the
+# desktop. One file, overwritten on every push — only the latest state matters.
+INVENTORY_FILE = DATA_DIR / "inventory.json"
+MAX_INVENTORY_BYTES = 4 * 1024 * 1024
+MAX_DELETE_ITEMS = 500
+DEFAULT_DELETE_RATE_LIMIT = "20/hour"
+# Services whose models the desktop knows how to delete. File-based services
+# take a path relative to their models root (ModelsScanRoot in the desktop
+# registry); for ollama the "path" is the model tag and deletion goes through
+# Ollama's own /api/delete.
+DELETABLE_SERVICES = {"sd-forge", "comfyui", "alltalk", "ollama"}
+# Only model weight files are deletable. Keeps a leaked agent token from
+# turning into "delete the user's configs/workflows/outputs".
+DELETABLE_EXTENSIONS = {"safetensors", "sft", "ckpt", "pt", "pth", "bin", "gguf", "onnx"}
+DELETE_RESULT_STATES = {"completed", "failed", "rejected"}
+DELETE_ITEM_STATUSES = {"deleted", "missing", "skipped", "error"}
 
 DEFAULT_TASK_TTL_SECONDS = 86400          # 24h before pending tasks auto-expire
 DEFAULT_TERMINAL_RETENTION_SECONDS = 7 * 86400  # keep finished tasks for 7d as audit trail
@@ -162,6 +182,7 @@ def _load_config() -> dict:
         "allowlist": {"hosts": list(DEFAULT_ALLOWLIST_HOSTS)},
         "agent": {"label": DEFAULT_AGENT_LABEL},
     }
+    cfg["tasks"]["delete_rate_limit"] = DEFAULT_DELETE_RATE_LIMIT
     if not CONFIG_FILE.exists():
         return cfg
     if yaml is None:
@@ -269,6 +290,35 @@ class LogRequestCreate(BaseModel):
 
 class LogRequestReject(BaseModel):
     reason: Optional[str] = Field(default=None, max_length=500)
+
+
+class DeleteItem(BaseModel):
+    service_id: str = Field(..., min_length=1, max_length=64)
+    # Forward-slash path relative to the service's models root, e.g.
+    # "checkpoints/flux1-dev-fp8.safetensors"; for ollama the model tag.
+    path: str = Field(..., min_length=1, max_length=400)
+    # Agent's size claim (from GET /api/inventory). Informational only — the
+    # desktop shows the size it measures on disk.
+    size_bytes: Optional[int] = Field(default=None, ge=0)
+
+
+class DeleteRequestCreate(BaseModel):
+    items: List[DeleteItem] = Field(..., min_length=1, max_length=MAX_DELETE_ITEMS)
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+
+class DeleteItemResult(BaseModel):
+    service_id: str = Field(..., max_length=64)
+    path: str = Field(..., max_length=400)
+    status: str
+    freed_bytes: int = Field(default=0, ge=0)
+    error: Optional[str] = Field(default=None, max_length=300)
+
+
+class DeleteResult(BaseModel):
+    state: str
+    error_msg: Optional[str] = Field(default=None, max_length=500)
+    results: List[DeleteItemResult] = Field(default_factory=list, max_length=MAX_DELETE_ITEMS)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -510,6 +560,36 @@ def _is_url_allowed(url: str) -> bool:
     return any(host == h or host.endswith("." + h) for h in allow)
 
 
+def _validate_delete_item(item: DeleteItem) -> Optional[str]:
+    """Return a rejection reason, or None when the item is acceptable. The
+    desktop re-validates and resolves the path against the real models root
+    (it owns the disk); this is the floor that keeps junk out of the queue."""
+    if item.service_id not in DELETABLE_SERVICES:
+        return f"service {item.service_id!r} does not support model deletion"
+    path = item.path
+    if item.service_id == "ollama":
+        # Tags look like "qwen3.5:4b" or "hf.co/unsloth/Qwen3.5-9B-GGUF:IQ4_XS".
+        if not re.fullmatch(r"[A-Za-z0-9._\-]+(/[A-Za-z0-9._\-]+)*(:[A-Za-z0-9._\-]+)?", path):
+            return "invalid ollama model tag"
+        return None
+    if path.startswith("/") or path.endswith("/"):
+        return "leading or trailing slash"
+    if any(ord(c) < 32 or c in '\\:*?"<>|' for c in path):
+        return "path contains a backslash, colon, wildcard or control character"
+    segments = path.split("/")
+    if len(segments) > 8:
+        return "more than 8 path segments"
+    for seg in segments:
+        # Windows silently strips trailing dots/spaces, so "a." aliases "a".
+        if not seg or seg in (".", "..") or seg != seg.strip() or seg.endswith("."):
+            return f"bad path segment {seg!r}"
+    name = segments[-1]
+    ext = name.rsplit(".", 1)[1].lower() if "." in name else ""
+    if ext not in DELETABLE_EXTENSIONS:
+        return f"extension {ext or '(none)'!r} is not a model file type"
+    return None
+
+
 def _init_db() -> None:
     """Create tasks table on first run. WAL mode lets the FastAPI worker
     process and the background expire loop both read/write without blocking
@@ -576,6 +656,25 @@ def _init_db() -> None:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS log_requests_state_idx ON log_requests(state)")
         conn.execute("CREATE INDEX IF NOT EXISTS log_requests_expires_idx ON log_requests(expires_at)")
+        # v1.6.0 — model deletion requests. Own table for the same reason as
+        # log_requests: pending → completed | failed | rejected | expired |
+        # revoked, with the item list and per-item results stored as JSON.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS delete_requests (
+                id           TEXT PRIMARY KEY,
+                created_at   REAL NOT NULL,
+                updated_at   REAL NOT NULL,
+                state        TEXT NOT NULL DEFAULT 'pending',
+                items        TEXT NOT NULL,
+                reason       TEXT,
+                agent_label  TEXT NOT NULL,
+                expires_at   REAL NOT NULL,
+                results      TEXT,
+                freed_bytes  INTEGER,
+                error_msg    TEXT
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS delete_requests_state_idx ON delete_requests(state)")
         conn.commit()
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     LOGS_DIR.chmod(0o700)
@@ -644,6 +743,25 @@ def _row_to_log_request(row: sqlite3.Row, *, include_internal: bool = False) -> 
     if include_internal:
         out["updated_at"] = _iso(row["updated_at"])
         out["log_size"] = row["log_size"]
+        out["error_msg"] = row["error_msg"]
+    return out
+
+
+def _row_to_delete_request(row: sqlite3.Row, *, include_internal: bool = False) -> dict:
+    """Project a delete_requests row into the JSON shape the desktop/agent expects."""
+    out = {
+        "id": row["id"],
+        "state": row["state"],
+        "items": json.loads(row["items"]),
+        "reason": row["reason"],
+        "agent_label": row["agent_label"],
+        "created_at": _iso(row["created_at"]),
+        "expires_at": _iso(row["expires_at"]),
+    }
+    if include_internal:
+        out["updated_at"] = _iso(row["updated_at"])
+        out["results"] = json.loads(row["results"]) if row["results"] else None
+        out["freed_bytes"] = row["freed_bytes"]
         out["error_msg"] = row["error_msg"]
     return out
 
@@ -1103,6 +1221,167 @@ def logs_delete(log_id: str, _: None = Depends(_require_agent_token)):
     return {"ok": True}
 
 
+# ── Inventory + deletion endpoints (v1.6.0 — remote model cleanup) ────────
+
+
+@app.put("/api/inventory")
+async def inventory_upload(
+    request: Request,
+    _: None = Depends(_require_remote_tasks_token),
+):
+    """Desktop pushes its current model inventory (JSON object). Replaces the
+    previous snapshot; the agent reads it via GET /api/inventory."""
+    cl = request.headers.get("content-length")
+    if cl is not None:
+        try:
+            if int(cl) > MAX_INVENTORY_BYTES:
+                raise HTTPException(status_code=413, detail="Inventory too large")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length")
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > MAX_INVENTORY_BYTES:
+            raise HTTPException(status_code=413, detail="Inventory too large")
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="Inventory is not valid JSON")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Inventory must be a JSON object")
+
+    tmp = INVENTORY_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data))
+    tmp.chmod(0o600)
+    tmp.replace(INVENTORY_FILE)
+    return {"ok": True}
+
+
+@app.get("/api/inventory")
+def inventory_get(_: None = Depends(_require_agent_token)):
+    """Agent reads the latest inventory snapshot. `received_at` tells how
+    fresh it is — the desktop re-pushes at least every 15 minutes while it
+    runs with remote cleanup enabled, so an old timestamp means it's offline."""
+    try:
+        data = json.loads(INVENTORY_FILE.read_text())
+        received = INVENTORY_FILE.stat().st_mtime
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="No inventory yet — desktop must be on v0.9.27+ with remote model cleanup enabled",
+        )
+    return {"received_at": _iso(received), "inventory": data}
+
+
+@app.post("/api/deletions", status_code=202)
+@limiter.limit(CONFIG["tasks"]["delete_rate_limit"], key_func=_agent_key)
+def deletion_create(
+    request: Request,
+    body: DeleteRequestCreate,
+    _: None = Depends(_require_agent_token),
+):
+    """Agent asks the desktop to delete model files. Nothing is deleted until
+    the user approves (and can untick individual items) in the desktop app."""
+    seen = set()
+    items = []
+    for item in body.items:
+        bad = _validate_delete_item(item)
+        if bad:
+            log.warning("deletions: rejected item service=%s path=%r (%s)", item.service_id, item.path, bad)
+            raise HTTPException(status_code=400, detail=f"Invalid item {item.service_id}:{item.path}: {bad}")
+        key = (item.service_id, item.path)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(item.model_dump())
+
+    req_id = str(uuid.uuid4())
+    now = time.time()
+    expires = now + float(CONFIG["tasks"]["ttl_seconds"])
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO delete_requests (id, created_at, updated_at, state, items, "
+            "reason, agent_label, expires_at) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)",
+            (req_id, now, now, json.dumps(items), body.reason, CONFIG["agent"]["label"], expires),
+        )
+    log.info("deletions: created id=%s items=%d", req_id, len(items))
+    return {"id": req_id}
+
+
+@app.get("/api/deletions/pending")
+def deletion_pending(_: None = Depends(_require_remote_tasks_token)):
+    """Desktop polls. Returns pending, unexpired deletion requests."""
+    now = time.time()
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM delete_requests WHERE state = 'pending' AND expires_at > ? "
+            "ORDER BY created_at ASC",
+            (now,),
+        ).fetchall()
+    return {"requests": [_row_to_delete_request(r) for r in rows]}
+
+
+@app.post("/api/deletions/{req_id}/result")
+def deletion_result(
+    req_id: str,
+    body: DeleteResult,
+    _: None = Depends(_require_remote_tasks_token),
+):
+    """Desktop reports the outcome: completed (user approved, per-item results
+    attached — some items may be skipped/errored), rejected, or failed."""
+    if body.state not in DELETE_RESULT_STATES:
+        raise HTTPException(status_code=400, detail=f"Invalid state: {body.state}")
+    for r in body.results:
+        if r.status not in DELETE_ITEM_STATUSES:
+            raise HTTPException(status_code=400, detail=f"Invalid item status: {r.status}")
+    freed = sum(r.freed_bytes for r in body.results)
+    now = time.time()
+    with _db() as conn:
+        row = conn.execute("SELECT state FROM delete_requests WHERE id = ?", (req_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Deletion request not found")
+        if row["state"] != "pending":
+            raise HTTPException(status_code=409, detail=f"Deletion request already {row['state']}")
+        conn.execute(
+            "UPDATE delete_requests SET state = ?, results = ?, freed_bytes = ?, "
+            "error_msg = ?, updated_at = ? WHERE id = ?",
+            (
+                body.state,
+                json.dumps([r.model_dump() for r in body.results]),
+                freed, body.error_msg, now, req_id,
+            ),
+        )
+    log.info("deletions: id=%s state=%s freed=%d bytes", req_id, body.state, freed)
+    return {"ok": True}
+
+
+@app.get("/api/deletions/{req_id}")
+def deletion_get(req_id: str, _: None = Depends(_require_agent_token)):
+    """Agent polls for the user's decision and per-item results."""
+    with _db() as conn:
+        row = conn.execute("SELECT * FROM delete_requests WHERE id = ?", (req_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Deletion request not found")
+    return _row_to_delete_request(row, include_internal=True)
+
+
+@app.delete("/api/deletions/{req_id}")
+def deletion_revoke(req_id: str, _: None = Depends(_require_agent_token)):
+    """Agent retracts a request the user hasn't answered yet."""
+    now = time.time()
+    with _db() as conn:
+        row = conn.execute("SELECT state FROM delete_requests WHERE id = ?", (req_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Deletion request not found")
+        if row["state"] != "pending":
+            raise HTTPException(status_code=409, detail=f"Deletion request not pending (state={row['state']})")
+        conn.execute(
+            "UPDATE delete_requests SET state = 'revoked', updated_at = ? WHERE id = ?",
+            (now, req_id),
+        )
+    return {"ok": True}
+
+
 # ── Background expire loop ────────────────────────────────────────────────
 
 
@@ -1158,10 +1437,25 @@ async def _expire_loop():
                     (now - retention,),
                 )
                 log_purged_count = cur.rowcount
-            if expired_count or purged_count or log_expired_count or log_purged_count:
+
+                cur = conn.execute(
+                    "UPDATE delete_requests SET state = 'expired', updated_at = ? "
+                    "WHERE state = 'pending' AND expires_at < ?",
+                    (now, now),
+                )
+                del_expired_count = cur.rowcount
+                cur = conn.execute(
+                    "DELETE FROM delete_requests WHERE state != 'pending' AND updated_at < ?",
+                    (now - retention,),
+                )
+                del_purged_count = cur.rowcount
+            if (expired_count or purged_count or log_expired_count or log_purged_count
+                    or del_expired_count or del_purged_count):
                 log.info(
-                    "expire_loop: tasks(expired=%d purged=%d) logs(expired=%d purged=%d)",
+                    "expire_loop: tasks(expired=%d purged=%d) logs(expired=%d purged=%d) "
+                    "deletions(expired=%d purged=%d)",
                     expired_count, purged_count, log_expired_count, log_purged_count,
+                    del_expired_count, del_purged_count,
                 )
         except asyncio.CancelledError:
             raise

@@ -159,6 +159,23 @@
                         VPS needs to see why a download failed without you copying logs by hand.
                     </TextBlock>
 
+                    <!-- Divider -->
+                    <Border Height="1" Background="#EBEBEB" Margin="0,20,0,20"/>
+
+                    <!-- Remote model cleanup (v0.9.27+ desktop / v1.6.0+ relay) -->
+                    <TextBlock Text="REMOTE MODEL CLEANUP" FontSize="10" FontWeight="SemiBold"
+                               Foreground="#9B9B9B" Margin="0,0,0,12"/>
+                    <CheckBox IsChecked="{Binding AllowRemoteModelCleanup}"
+                              IsEnabled="{Binding RemoteInstallSupported}"
+                              Content="Allow the VPS agent to see installed models and request deletions"
+                              Foreground="#1A1A1A" Margin="0,0,0,6"/>
+                    <TextBlock FontSize="11" Foreground="#9B9B9B" TextWrapping="Wrap"
+                               Margin="22,0,0,0">
+                        When on, the list of model files (names, sizes, folders) and free disk
+                        space is shared with the VPS relay so an agent can suggest what to clean up.
+                        Every deletion request opens a window where you pick what actually gets deleted.
+                    </TextBlock>
+
                 </StackPanel>
             </ScrollViewer>
 

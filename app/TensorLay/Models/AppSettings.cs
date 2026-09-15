@@ -50,4 +50,12 @@ public class AppSettings
     // and uploading them. When OFF, every request is auto-rejected with a
     // reason the agent can read via /api/logs/{id}/info.
     public bool AllowRemoteLogRequests { get; set; } = false;
+
+    // v0.9.27 / relay v1.6.0 — remote model cleanup. Off by default. When ON,
+    // RemoteCleanupService pushes the list of installed model files (names,
+    // sizes, models folder paths, free disk space) to the relay and surfaces
+    // agent deletion requests in an approval window; nothing is deleted
+    // without a click there. When OFF, no inventory is sent and deletion
+    // requests are auto-rejected with a reason.
+    public bool AllowRemoteModelCleanup { get; set; } = false;
 }

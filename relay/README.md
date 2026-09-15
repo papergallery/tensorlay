@@ -36,12 +36,45 @@ The agent (e.g. Claude Code on the VPS) submits download tasks; the desktop poll
 
 URLs in `install-model` are validated against the allowlist in `config.yaml` (defaults: HuggingFace, CivitAI, GitHub releases). Plain HTTP is rejected; only `https://` URLs are accepted.
 
+### Remote model cleanup (since v1.6.0, desktop v0.9.27+)
+
+With **Settings → Allow the VPS agent to see installed models and request deletions** turned on, the desktop pushes a model inventory every few minutes and polls for deletion requests. Each request opens a window listing the files with checkboxes; nothing is deleted until the user clicks, and they can untick anything. With the toggle off, no inventory is sent and requests come back `rejected`.
+
+| Method | Path                              | Auth         | Purpose |
+|--------|-----------------------------------|--------------|---------|
+| GET    | `/api/inventory`                  | agent token  | Latest model inventory + `received_at` |
+| POST   | `/api/deletions`                  | agent token  | Queue a deletion request (rate-limited, `20/hour` by default) |
+| GET    | `/api/deletions/{id}`             | agent token  | Poll state + per-item results |
+| DELETE | `/api/deletions/{id}`             | agent token  | Revoke a still-pending request |
+| PUT    | `/api/inventory`                  | tasks token  | Desktop uploads its inventory |
+| GET    | `/api/deletions/pending`          | tasks token  | Desktop polls for new requests |
+| POST   | `/api/deletions/{id}/result`      | tasks token  | Desktop reports `completed` / `rejected` / `failed` |
+
+Inventory shape (abridged): `{"received_at": "...Z", "inventory": {"generated_at", "app_version", "install_directory", "disk": {"root", "total_bytes", "free_bytes"}, "services": [{"service_id", "display_name", "available", "models_root", "note", "total_bytes", "files": [{"path", "size_bytes", "modified_at"}]}]}}`. The desktop re-pushes at least every 15 minutes while running, so a stale `received_at` means it is offline or the toggle is off.
+
+Deletion request body — paths exactly as they appear in the inventory:
+
+```json
+{
+  "reason": "FLUX.1 stack is unused since the switch to FLUX.2 klein",
+  "items": [
+    {"service_id": "comfyui", "path": "checkpoints/flux1-dev-fp8.safetensors", "size_bytes": 17000000000},
+    {"service_id": "ollama",  "path": "qwen3.5:4b"}
+  ]
+}
+```
+
+Only `sd-forge`, `comfyui`, `alltalk` (paths relative to the service's models folder) and `ollama` (model tags, deleted through Ollama's API — it must be running) are accepted, and only model file types (`.safetensors .sft .ckpt .pt .pth .bin .gguf .onnx`). Absolute paths, `..`, backslashes, colons and wildcards are rejected here and again on the desktop, which also checks that the resolved path stays inside the models folder. Deletion is permanent (not the Recycle Bin).
+
+Result: `state` is `pending` → `completed` (user approved; see `results[]`, each `deleted` | `missing` | `skipped` (unticked) | `error` with `error`, plus total `freed_bytes`), `rejected`, `expired` (24h) or `revoked`.
+
 ## Files
 
 - `install.sh` — one-command installer (run as root)
 - `relay.py` — FastAPI daemon (single file, ~800 LOC)
 - `config.yaml.example` — allowlist + TTL config (copied to `/opt/tensorlay-relay/config.yaml` on first install)
 - `tests/smoke_test.py` — end-to-end test of all endpoints against an isolated DB
+- `tests/deletions_test.py` — inventory + model deletion endpoints (v1.6.0)
 
 That's the whole relay. By design.
 
@@ -89,5 +122,6 @@ agent:
 - `/opt/tensorlay-relay/service_token` — long-lived token for `/services` (one per VPS, persists across pairings)
 - `/opt/tensorlay-relay/remote_tasks_token` — desktop's bearer for `/api/tasks/*` (rotated on every `/pair`)
 - `/opt/tensorlay-relay/agent_token` — agent's bearer for `/api/tasks/install-model`
-- `/opt/tensorlay-relay/tasks.db` — SQLite (WAL mode) holding the task queue and 7-day audit history
+- `/opt/tensorlay-relay/tasks.db` — SQLite (WAL mode) holding the task queue, deletion requests and 7-day audit history
+- `/opt/tensorlay-relay/inventory.json` — latest model inventory pushed by the desktop (mode 0600)
 - `/opt/tensorlay-relay/config.yaml` — admin-editable config (see above)

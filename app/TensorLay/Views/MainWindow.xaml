@@ -567,7 +567,8 @@
                                                        VerticalAlignment="Center" Margin="12,0,0,0"/>
                                             <Button Grid.Column="3" Style="{StaticResource DangerButton}"
                                                     Padding="8,3" FontSize="11" Margin="10,0,0,0"
-                                                    VerticalAlignment="Center">
+                                                    VerticalAlignment="Center"
+                                                    Click="OnDeleteModelClick">
                                                 <TextBlock Text="Delete" Foreground="#E74C3C"/>
                                             </Button>
                                         </Grid>
@@ -664,7 +665,8 @@
                                         <Button Grid.Column="3" Content="Delete"
                                                 Style="{StaticResource DangerButton}"
                                                 Padding="8,3" FontSize="11"
-                                                VerticalAlignment="Center"/>
+                                                VerticalAlignment="Center"
+                                                Click="OnDeleteModelClick"/>
                                     </Grid>
                                 </Border>
                             </DataTemplate>

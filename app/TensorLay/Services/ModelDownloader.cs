@@ -10,12 +10,6 @@ namespace TensorLay.Services;
 
 public class ModelDownloader : IDisposable
 {
-    // .pth covers ESRGAN/upscalers (e.g. 4x-UltraSharp), .bin for some
-    // CLIP/embedding files, plus the SD checkpoint formats and gguf for
-    // quantized LLM weights. Keeping the list in one place so adding a
-    // new format is a one-line change.
-    private static readonly string[] ModelExtensions = { "*.safetensors", "*.ckpt", "*.gguf", "*.pth", "*.bin" };
-
     // Per-chunk idle (between-reads) timeout. With HttpClient.Timeout disabled
     // we still need an escape from a TCP socket that stays alive but stops
     // delivering bytes — this is what kills xet-bridge wedges on HF without
@@ -113,6 +107,23 @@ public class ModelDownloader : IDisposable
         _activeTasks[url] = fresh;
         _ = RunDownload(fresh);
         return fresh;
+    }
+
+    // True while a download is writing to this file. Model deletion checks it
+    // so a cleanup request can't pull a file out from under a running download.
+    public bool IsDownloadingTo(string fullPath)
+    {
+        foreach (var task in _activeTasks.Values)
+        {
+            if (task.State is not (DownloadState.Pending or DownloadState.Downloading)) continue;
+            try
+            {
+                if (string.Equals(Path.GetFullPath(task.TargetPath), fullPath, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            catch (ArgumentException) { /* malformed target path — can't be ours */ }
+        }
+        return false;
     }
 
     public void CancelDownload(DownloadTask task)
@@ -370,34 +381,9 @@ public class ModelDownloader : IDisposable
         if (string.IsNullOrEmpty(service.ModelsSubfolder))
             return new();
 
-        // Prefer ModelsScanRoot when set (parent dir holding multiple
-        // model-type subfolders, e.g. ComfyUI's "models" → checkpoints/,
-        // loras/, vae/, …). Fall back to ModelsSubfolder so services that
-        // keep a flat layout still work without a registry change.
-        string scanRel = string.IsNullOrEmpty(service.ModelsScanRoot)
-            ? service.ModelsSubfolder
-            : service.ModelsScanRoot;
-
-        string modelsDir = string.IsNullOrEmpty(service.RelativeInstallPath)
-            ? Path.Combine(installDir, scanRel)
-            : Path.Combine(installDir, service.RelativeInstallPath, scanRel);
-
-        if (!Directory.Exists(modelsDir))
-            return new();
-
-        var files = ModelExtensions
-            .SelectMany(pattern => Directory.GetFiles(modelsDir, pattern, SearchOption.AllDirectories))
-            .Distinct()
-            .Select(path => new ModelInfo
-            {
-                ServiceId = service.Id,
-                FileName = Path.GetFileName(path),
-                FullPath = path,
-                SizeBytes = new FileInfo(path).Length
-            })
-            .ToList();
-
-        return files;
+        // Which extensions count and where the models root is live in
+        // ModelFiles, shared with the relay inventory and model deletion.
+        return ModelFiles.Scan(service, installDir);
     }
 
     // Ollama-specific model listing: hits the local API instead of
@@ -405,11 +391,16 @@ public class ModelDownloader : IDisposable
     // running, timeout, parse error) — caller should treat that as "no
     // models known" rather than escalate.
     public async Task<List<ModelInfo>> GetOllamaModelsAsync(int port = 11434)
+        => await TryGetOllamaModelsAsync(port).ConfigureAwait(false) ?? new();
+
+    // Same as GetOllamaModelsAsync but returns null when Ollama couldn't be
+    // queried at all, so callers can tell "not running" from "no models".
+    public async Task<List<ModelInfo>?> TryGetOllamaModelsAsync(int port = 11434)
     {
         try
         {
             using var resp = await _ollamaApiClient.GetAsync($"http://127.0.0.1:{port}/api/tags").ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode) return new();
+            if (!resp.IsSuccessStatusCode) return null;
             string json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
 
             using var doc = JsonDocument.Parse(json);
@@ -423,6 +414,11 @@ public class ModelDownloader : IDisposable
                 long size = m.TryGetProperty("size", out var sizeProp) && sizeProp.ValueKind == JsonValueKind.Number
                     ? sizeProp.GetInt64()
                     : 0;
+                DateTime? modified = m.TryGetProperty("modified_at", out var modProp)
+                    && modProp.ValueKind == JsonValueKind.String
+                    && modProp.TryGetDateTimeOffset(out var dto)
+                        ? dto.UtcDateTime
+                        : null;
                 result.Add(new ModelInfo
                 {
                     ServiceId = "ollama",
@@ -435,14 +431,16 @@ public class ModelDownloader : IDisposable
                     // detects the empty FullPath + ollama service id and
                     // routes there.
                     FullPath = "",
+                    RelativePath = name,
                     SizeBytes = size,
+                    ModifiedUtc = modified,
                 });
             }
             return result;
         }
         catch
         {
-            return new();
+            return null;
         }
     }
 
