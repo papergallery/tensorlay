@@ -43,6 +43,17 @@ public partial class SettingsViewModel : ViewModelBase
     [ObservableProperty]
     private bool _allowRemoteModelCleanup;
 
+    [ObservableProperty]
+    private bool _allowRemoteCommandBridge;
+
+    // The bridge bearer token, shown so the user can copy it to the VPS
+    // (~/.tensorlay_bridge_token). Generated on first enable + Save.
+    [ObservableProperty]
+    private string _remoteCommandBridgeToken = "";
+
+    [ObservableProperty]
+    private int _remoteCommandBridgePort = 6520;
+
     // True only when the relay returned a non-empty remote_tasks_token at
     // pair time (i.e. relay >= v1.3.0). Toggle is grayed out when false.
     [ObservableProperty]
@@ -70,6 +81,9 @@ public partial class SettingsViewModel : ViewModelBase
         AllowRemoteInstallRequests = settings.AllowRemoteInstallRequests;
         AllowRemoteLogRequests = settings.AllowRemoteLogRequests;
         AllowRemoteModelCleanup = settings.AllowRemoteModelCleanup;
+        AllowRemoteCommandBridge = settings.AllowRemoteCommandBridge;
+        RemoteCommandBridgeToken = settings.RemoteCommandBridgeToken;
+        RemoteCommandBridgePort = settings.RemoteCommandBridgePort;
         RemoteInstallSupported = !string.IsNullOrEmpty(settings.RemoteTasksToken);
     }
 
@@ -110,7 +124,36 @@ public partial class SettingsViewModel : ViewModelBase
         settings.AllowRemoteInstallRequests = AllowRemoteInstallRequests;
         settings.AllowRemoteLogRequests = AllowRemoteLogRequests;
         settings.AllowRemoteModelCleanup = AllowRemoteModelCleanup;
+
+        // Bridge: issue a token the first time the feature is turned on so the
+        // listener has something to check against. We never clear the token on
+        // disable — turning the bridge back on later keeps the same secret the
+        // VPS already has. Use Regenerate to deliberately rotate it.
+        settings.AllowRemoteCommandBridge = AllowRemoteCommandBridge;
+        if (AllowRemoteCommandBridge && string.IsNullOrEmpty(RemoteCommandBridgeToken))
+            RemoteCommandBridgeToken = RemoteBridgeService.GenerateToken();
+        settings.RemoteCommandBridgeToken = RemoteCommandBridgeToken;
+        settings.RemoteCommandBridgePort = RemoteCommandBridgePort;
+
         _settingsService.Save(settings);
+    }
+
+    [RelayCommand]
+    private void CopyBridgeToken()
+    {
+        if (!string.IsNullOrEmpty(RemoteCommandBridgeToken))
+        {
+            try { System.Windows.Clipboard.SetText(RemoteCommandBridgeToken); }
+            catch { /* clipboard busy — user can select the text manually */ }
+        }
+    }
+
+    // Rotate the token in the UI only; it persists on the next Save. The old
+    // token keeps working until then, so the VPS side has time to update.
+    [RelayCommand]
+    private void RegenerateBridgeToken()
+    {
+        RemoteCommandBridgeToken = RemoteBridgeService.GenerateToken();
     }
 
     [RelayCommand]

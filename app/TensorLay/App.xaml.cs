@@ -39,6 +39,7 @@ public partial class App : Application
     private GpuMonitor? _gpuMonitor;
     private SshTunnelService? _sshTunnelService;
     private AccountService? _accountService;
+    private RemoteBridgeService? _remoteBridgeService;
     private MainWindow? _mainWindow;
 
     protected override async void OnStartup(StartupEventArgs e)
@@ -190,6 +191,18 @@ public partial class App : Application
 
         mainVm.Initialize();
 
+        // Command bridge ("super-bridge"): built after the VM so its handlers
+        // can drive services and read state through the VM (reusing the exact
+        // ServiceViewModel command path the UI uses). Off unless the user
+        // enabled it in Settings — AttachBridge starts the listener only then.
+        _remoteBridgeService = new RemoteBridgeService(
+            settingsService,
+            mainVm.GetBridgeServices,
+            mainVm.BridgeStartService,
+            mainVm.BridgeStopService,
+            mainVm.GetBridgeGpu);
+        mainVm.AttachBridge(_remoteBridgeService);
+
         // Build the updater up-front so we can stamp the Title BEFORE Show()
         // — otherwise the user sees "TensorLay" briefly before it flashes to
         // "TensorLay v0.7.9" once the update check kicks in.
@@ -246,6 +259,7 @@ public partial class App : Application
         try { _pipeCts?.Cancel(); } catch { /* ignore */ }
         _processManager?.Dispose();
         _healthCheckService?.Dispose();
+        _remoteBridgeService?.Dispose();
         _remoteTaskService?.Dispose();
         _remoteLogService?.Dispose();
         _remoteCleanupService?.Dispose();

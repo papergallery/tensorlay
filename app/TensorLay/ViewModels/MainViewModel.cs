@@ -21,6 +21,9 @@ public partial class MainViewModel : ViewModelBase
     private readonly RemoteTaskService _remoteTaskService;
     private readonly RemoteCleanupService _remoteCleanupService;
     private readonly ModelDeletionService _modelDeletionService;
+    // Attached after construction (App builds it with delegates that call
+    // back into this VM — see AttachBridge). Null until then.
+    private RemoteBridgeService? _remoteBridgeService;
     // One deletion window at a time — same pattern as remote install
     // approvals. Agent requests queue while a window is open; local Delete
     // clicks share the slot so the two kinds never stack on top of each other.
@@ -72,6 +75,12 @@ public partial class MainViewModel : ViewModelBase
     // interactive vs grayed-out with "update your relay" tooltip.
     [ObservableProperty]
     private bool _remoteTasksSupported;
+
+    // True while the command bridge is listening. Drives the warning banner
+    // in the main window ("agent can run commands on this PC") and its
+    // one-click Stop button. Kept in sync from the bridge's Log/lifecycle.
+    [ObservableProperty]
+    private bool _isBridgeActive;
 
     public int ActiveServicesCount =>
         Services.Count(s => s.State == ServiceState.Running);
@@ -363,17 +372,132 @@ public partial class MainViewModel : ViewModelBase
     /// </summary>
     private IReadOnlyList<int> GetCurrentlyTunnelablePorts()
     {
-        return Services
+        var ports = Services
             .Where(s => s.State != ServiceState.NotInstalled
                      && s.State != ServiceState.Installing)
             .Select(s => s.Definition.Port)
             .ToList();
+
+        // Add the command bridge port when the feature is on, so the agent on
+        // the VPS can reach the local bridge over the same tunnel (relay's
+        // permitlisten whitelists this port — see relay.py BRIDGE_PORT). Takes
+        // effect on the next (re)connect; OpenSettings reconnects when the user
+        // flips the toggle with a live tunnel.
+        var settings = _settingsService.Load();
+        if (settings.AllowRemoteCommandBridge)
+            ports.Add(settings.RemoteCommandBridgePort);
+
+        return ports;
     }
 
     [RelayCommand(CanExecute = nameof(CanDisconnectTunnel))]
     private async Task DisconnectTunnel()
     {
         await _sshTunnelService.Disconnect();
+    }
+
+    // ── Command bridge ("super-bridge") ──────────────────────────────────────
+
+    /// <summary>
+    /// Wire up the bridge built in App. The bridge calls the delegates below
+    /// (on its own threads) to drive services and read GPU/state; we route its
+    /// log lines to the activity log and keep IsBridgeActive in sync. Starts
+    /// the listener if the feature is already enabled.
+    /// </summary>
+    public void AttachBridge(RemoteBridgeService bridge)
+    {
+        _remoteBridgeService = bridge;
+        bridge.Log += msg => RunOnUI(() =>
+        {
+            AddLog($"[bridge] {msg}");
+            IsBridgeActive = bridge.IsRunning;
+        });
+
+        var settings = _settingsService.Load();
+        if (settings.IsPaired && settings.AllowRemoteCommandBridge
+            && !string.IsNullOrEmpty(settings.RemoteCommandBridgeToken))
+        {
+            bridge.Start();
+        }
+        RunOnUI(() => IsBridgeActive = bridge.IsRunning);
+    }
+
+    // Snapshot the service list for /bridge/services — marshalled to the UI
+    // thread because Services is an ObservableCollection bound to the view.
+    public IReadOnlyList<BridgeServiceInfo> GetBridgeServices()
+    {
+        var d = System.Windows.Application.Current.Dispatcher;
+        return d.Invoke(() => Services.Select(s => new BridgeServiceInfo(
+            s.Definition.Id,
+            s.Definition.DisplayName,
+            s.Definition.Port,
+            s.Definition.Category,
+            s.State.ToString(),
+            s.State != ServiceState.NotInstalled)).ToList());
+    }
+
+    public GpuInfo? GetBridgeGpu() => GpuInfo;
+
+    public Task<bool> BridgeStartService(string id) => BridgeServiceControl(id, start: true);
+    public Task<bool> BridgeStopService(string id) => BridgeServiceControl(id, start: false);
+
+    private async Task<bool> BridgeServiceControl(string id, bool start)
+    {
+        var d = System.Windows.Application.Current.Dispatcher;
+        return await d.InvokeAsync(async () =>
+        {
+            var vm = Services.FirstOrDefault(s => s.Definition.Id == id);
+            if (vm == null) return false;
+            if (start) await vm.StartCommand.ExecuteAsync(null);
+            else await vm.StopCommand.ExecuteAsync(null);
+            return true;
+        }).Task.Unwrap();
+    }
+
+    /// <summary>
+    /// One-click kill switch shown on the bridge banner: turn the feature off,
+    /// persist it, and stop the listener immediately. The forwarded port stays
+    /// in the tunnel until the next reconnect but nothing listens on it.
+    /// </summary>
+    [RelayCommand]
+    private void StopBridge()
+    {
+        var settings = _settingsService.Load();
+        settings.AllowRemoteCommandBridge = false;
+        _settingsService.Save(settings);
+        _remoteBridgeService?.Stop();
+        IsBridgeActive = _remoteBridgeService?.IsRunning ?? false;
+    }
+
+    /// <summary>
+    /// Reconcile the bridge listener + tunnel with the settings the user just
+    /// saved. Called from OpenSettings after a Save.
+    /// </summary>
+    private async Task ReconcileBridge()
+    {
+        if (_remoteBridgeService is null) return;
+        var settings = _settingsService.Load();
+        bool shouldRun = settings.AllowRemoteCommandBridge
+                         && !string.IsNullOrEmpty(settings.RemoteCommandBridgeToken);
+        bool wasRunning = _remoteBridgeService.IsRunning;
+
+        if (shouldRun)
+        {
+            _remoteBridgeService.Start();
+            // Forward the bridge port now rather than on the next random drop:
+            // GetCurrentlyTunnelablePorts already includes it, so a reconnect
+            // re-establishes the forward set with the bridge port added.
+            if (!wasRunning && IsTunnelConnected)
+            {
+                AddLog("[bridge] Reconnecting the tunnel to forward the bridge port…");
+                await _sshTunnelService.Connect(settings, GetCurrentlyTunnelablePorts);
+            }
+        }
+        else
+        {
+            _remoteBridgeService.Stop();
+        }
+        IsBridgeActive = _remoteBridgeService.IsRunning;
     }
 
     [RelayCommand]
@@ -423,6 +547,9 @@ public partial class MainViewModel : ViewModelBase
             _remoteTaskService.StartPolling();
         else if (!shouldPoll && wasPolling)
             await _remoteTaskService.StopPolling().ConfigureAwait(true);
+
+        // Reconcile the command bridge with the (possibly) changed toggle.
+        await ReconcileBridge().ConfigureAwait(true);
     }
 
     /// <summary>

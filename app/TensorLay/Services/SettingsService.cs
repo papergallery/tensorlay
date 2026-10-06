@@ -65,6 +65,7 @@ public class SettingsService
         // machine) is logged-as-empty rather than thrown — losing the bearer
         // token just means polling pauses until the user re-pairs.
         settings.RemoteTasksToken = TryDecryptField(settings.RemoteTasksToken);
+        settings.RemoteCommandBridgeToken = TryDecryptField(settings.RemoteCommandBridgeToken);
         return settings;
     }
 
@@ -75,6 +76,7 @@ public class SettingsService
         // call (we re-deserialize from cached JSON), and the caller in turn
         // doesn't reuse the same AppSettings instance after Save.
         settings.RemoteTasksToken = EncryptField(settings.RemoteTasksToken);
+        settings.RemoteCommandBridgeToken = EncryptField(settings.RemoteCommandBridgeToken);
 
         string dir = Path.GetDirectoryName(SettingsPath)!;
         if (!Directory.Exists(dir))

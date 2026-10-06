@@ -173,6 +173,26 @@
                     </Border>
                 </StackPanel>
 
+                <!-- Command-bridge active banner (center) — visible only while
+                     the bridge is listening. The agent can run commands on
+                     this PC; one click here turns it off. HitTestVisibleInChrome
+                     so the Stop button works inside the WindowChrome caption. -->
+                <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Background="#FEF2F2" BorderBrush="#F3C0C0" BorderThickness="1"
+                        CornerRadius="12" Padding="10,3"
+                        WindowChrome.IsHitTestVisibleInChrome="True"
+                        Visibility="{Binding IsBridgeActive, Converter={StaticResource BoolToVisibility}}">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Ellipse Width="7" Height="7" Fill="#E74C3C" VerticalAlignment="Center"/>
+                        <TextBlock Text="Command bridge ON — agent can run commands on this PC"
+                                   FontSize="11" FontWeight="SemiBold" Foreground="#C0392B"
+                                   VerticalAlignment="Center" Margin="7,0,0,0"/>
+                        <Button Content="Stop" Margin="10,0,0,0" Padding="10,2" FontSize="11"
+                                Cursor="Hand" Command="{Binding StopBridgeCommand}"
+                                Background="#E74C3C" Foreground="White" BorderThickness="0"/>
+                    </StackPanel>
+                </Border>
+
                 <!-- Window buttons (right) — Win11 style, all 10x10 viewbox -->
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
                             VerticalAlignment="Stretch"

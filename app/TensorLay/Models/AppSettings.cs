@@ -58,4 +58,30 @@ public class AppSettings
     // without a click there. When OFF, no inventory is sent and deletion
     // requests are auto-rejected with a reason.
     public bool AllowRemoteModelCleanup { get; set; } = false;
+
+    // v0.9.28 — command bridge ("super-bridge", modelled on the thechest
+    // Unity MCP bridge). Off by default and the most powerful switch in the
+    // app: when ON, a local HTTP server binds 127.0.0.1:<RemoteCommandBridge-
+    // Port> and the running SSH tunnel forwards that port to the VPS, so an
+    // agent on the VPS can run commands, move files, and start/stop services
+    // on THIS PC. That is remote code execution on your machine by design —
+    // it only runs while the app is open, only while this toggle is on, and
+    // every request must carry the bearer token below. Treat the token like
+    // a password; regenerating it in Settings instantly locks out the old one.
+    public bool AllowRemoteCommandBridge { get; set; } = false;
+
+    // Bearer token the VPS client must send on every bridge request
+    // (Authorization: Bearer <token>). Generated locally the first time the
+    // bridge is enabled, DPAPI-encrypted at rest like RemoteTasksToken. The
+    // matching value lives on the VPS in ~/.tensorlay_bridge_token. Empty
+    // means "no token issued yet" — the bridge refuses every request until
+    // one exists.
+    public string RemoteCommandBridgeToken { get; set; } = "";
+
+    // Local port the bridge HTTP server binds (127.0.0.1 only) and the tunnel
+    // forwards. Defaults to 6520 — distinct from the thechest Unity MCP bridge
+    // on 6510 so both can ride the same machine. Must be in the relay's
+    // permitlisten whitelist (see relay.py BRIDGE_PORT); changing it needs a
+    // matching relay change + re-pair.
+    public int RemoteCommandBridgePort { get; set; } = 6520;
 }

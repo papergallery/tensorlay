@@ -41,7 +41,7 @@ except ImportError:
 
 # ── Constants ─────────────────────────────────────────────────────────────
 
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 DATA_DIR = Path("/opt/tensorlay-relay")
 PAIRING_CODE_FILE = DATA_DIR / "pairing_code"
 SERVICE_TOKEN_FILE = DATA_DIR / "service_token"
@@ -150,8 +150,16 @@ SERVICES = [
 # permitlisten white-list (which alone restricts -R to the listed ports)
 # achieves the same security posture: no shell, no exec, no agent/X11/pty,
 # and remote-forward only on the AI service ports.
+# v1.7.0 — the command bridge ("super-bridge") rides the same tunnel. The
+# desktop binds 127.0.0.1:BRIDGE_PORT only while the user enabled the feature
+# AND supplied the bearer token, so permitting the forward here is harmless on
+# its own — nothing listens otherwise. Keep in sync with the desktop's
+# AppSettings.RemoteCommandBridgePort default (6520).
+BRIDGE_PORT = 6520
+
 PERMIT_OPTIONS = "no-agent-forwarding,no-pty,no-user-rc,no-X11-forwarding," + ",".join(
-    f'permitlisten="127.0.0.1:{s["port"]}"' for s in SERVICES
+    [f'permitlisten="127.0.0.1:{s["port"]}"' for s in SERVICES]
+    + [f'permitlisten="127.0.0.1:{BRIDGE_PORT}"']
 )
 
 # ── Logging ───────────────────────────────────────────────────────────────
