@@ -10,6 +10,8 @@ public class SshTunnelService : IDisposable
     // Hard cap on the underlying SSH library's blocking connect — without
     // this, a routing black-hole leaves the UI command stuck for ~30s.
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
+    // Below the relay's ClientAliveInterval (30 s).
+    private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(15);
 
     private readonly SettingsService _settingsService;
     private SshClient? _client;
@@ -50,6 +52,12 @@ public class SshTunnelService : IDisposable
                 var keyFile = new PrivateKeyFile(settings.SshKeyPath);
                 _client = new SshClient(settings.VpsHost, settings.SshPort, settings.VpsUser, keyFile);
                 _client.ConnectionInfo.Timeout = ConnectTimeout;
+                // SSH.NET never replies to the server's keepalive@openssh.com probes, so an sshd with
+                // ClientAliveInterval counts every idle window as unanswered and drops the session
+                // ("Timeout, client not responding" — every session on the relay since 2026-09-30,
+                // 14–24 min each). Our own keepalive keeps sshd from ever seeing an idle window, and
+                // a failed send flips IsConnected so AutoReconnectLoop notices a dead link in seconds.
+                _client.KeepAliveInterval = KeepAliveInterval;
                 _client.HostKeyReceived += OnHostKeyReceived;
 
                 TunnelLog?.Invoke($"Connecting to {settings.VpsUser}@{settings.VpsHost}:{settings.SshPort}...");
