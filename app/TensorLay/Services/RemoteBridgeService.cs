@@ -395,6 +395,11 @@ public class RemoteBridgeService : IDisposable
         // Detach: no redirected streams, let the child own its own handles.
         psi.RedirectStandardOutput = false;
         psi.RedirectStandardError = false;
+        // BuildShellStartInfo sets UTF-8 stream encodings for exec; Process.Start rejects them
+        // without redirection ("StandardOutputEncoding is only supported when standard output
+        // is redirected") — every spawn failed in 0.9.28.
+        psi.StandardOutputEncoding = null;
+        psi.StandardErrorEncoding = null;
         psi.UseShellExecute = false;
         psi.CreateNoWindow = true;
 
