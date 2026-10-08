@@ -358,6 +358,10 @@ public partial class MainViewModel : ViewModelBase
         }
 
         await _sshTunnelService.Connect(settings, GetCurrentlyTunnelablePorts);
+        // The user asked for a tunnel: keep it up from now on, including when
+        // this first attempt failed (no network at startup). DisconnectTunnel
+        // stops the loop.
+        _sshTunnelService.AutoReconnectLoop(GetCurrentlyTunnelablePorts);
     }
 
     /// <summary>

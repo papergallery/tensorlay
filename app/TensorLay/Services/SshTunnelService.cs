@@ -12,6 +12,12 @@ public class SshTunnelService : IDisposable
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
     // Below the relay's ClientAliveInterval (30 s).
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(15);
+    // SSH.NET's Disconnect() can block indefinitely on a socket whose network
+    // vanished (it waits for the message listener). Tearing down the old session
+    // must never hold _connectLock forever — past this we abandon it.
+    private static readonly TimeSpan TeardownTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan LivenessCheckInterval = TimeSpan.FromSeconds(5);
+    private const int MaxReconnectDelaySeconds = 30;
 
     private readonly SettingsService _settingsService;
     private SshClient? _client;
@@ -59,6 +65,7 @@ public class SshTunnelService : IDisposable
                 // a failed send flips IsConnected so AutoReconnectLoop notices a dead link in seconds.
                 _client.KeepAliveInterval = KeepAliveInterval;
                 _client.HostKeyReceived += OnHostKeyReceived;
+                _client.ErrorOccurred += OnClientError;
 
                 TunnelLog?.Invoke($"Connecting to {settings.VpsUser}@{settings.VpsHost}:{settings.SshPort}...");
                 await _client.ConnectAsync(ct).ConfigureAwait(false);
@@ -84,12 +91,18 @@ public class SshTunnelService : IDisposable
             catch (OperationCanceledException)
             {
                 TunnelLog?.Invoke("Connection cancelled.");
+                await DisconnectInternal().ConfigureAwait(false);
                 ConnectionStatusChanged?.Invoke(false);
                 throw;
             }
             catch (Exception ex)
             {
+                // Also a half-built session: SSH connected but a remote forward was
+                // refused (e.g. sshd still holds the port for the previous, dead
+                // session). Drop it so IsConnected is false and the reconnect loop
+                // retries, instead of a "connected" tunnel that forwards nothing.
                 TunnelLog?.Invoke($"Connection failed: {ex.Message}");
+                await DisconnectInternal().ConfigureAwait(false);
                 ConnectionStatusChanged?.Invoke(false);
             }
         }
@@ -124,67 +137,125 @@ public class SshTunnelService : IDisposable
         ConnectionStatusChanged?.Invoke(false);
     }
 
-    private Task DisconnectInternal()
+    /// <summary>
+    /// Stops the forwards and closes the session. Never throws and never takes
+    /// longer than TeardownTimeout: a session whose network is gone may block in
+    /// SSH.NET's Disconnect(), and Connect calls this under _connectLock.
+    /// </summary>
+    private async Task DisconnectInternal()
     {
-        return Task.Run(() =>
+        var client = _client;
+        var ports = _ports.ToList();
+        _client = null;
+        _ports.Clear();
+        if (client == null && ports.Count == 0) return;
+
+        if (client != null)
         {
-            foreach (var port in _ports)
+            client.ErrorOccurred -= OnClientError;
+            client.HostKeyReceived -= OnHostKeyReceived;
+        }
+
+        var teardown = Task.Run(() =>
+        {
+            foreach (var port in ports)
             {
                 try { port.Stop(); } catch { }
             }
-            _ports.Clear();
-
-            try { _client?.Disconnect(); } catch { }
-            _client?.Dispose();
-            _client = null;
+            try { client?.Disconnect(); } catch { }
+            try { client?.Dispose(); } catch { }
         });
+
+        try
+        {
+            await teardown.WaitAsync(TeardownTimeout).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            TunnelLog?.Invoke($"Old SSH session did not close in {TeardownTimeout.TotalSeconds:0}s - abandoned.");
+        }
+    }
+
+    private void OnClientError(object? sender, Renci.SshNet.Common.ExceptionEventArgs e)
+    {
+        // Raised on SSH.NET's own threads when the session breaks (network gone,
+        // keepalive send failed, server closed). The reconnect loop notices via
+        // IsConnected; this only makes the reason visible in the log.
+        TunnelLog?.Invoke($"Tunnel error: {e.Exception.Message}");
     }
 
     /// <summary>
-    /// Starts a background loop that monitors connection and reconnects on drop.
-    /// Uses exponential backoff: 1s, 2s, 4s, ... up to 30s.
-    /// The portsProvider is re-evaluated on every reconnect attempt so that
-    /// services started after the initial connect are picked up.
+    /// Keeps the tunnel up until Disconnect() or Dispose(): checks the session
+    /// every few seconds and reconnects on drop with exponential backoff
+    /// (1s, 2s, 4s, ... up to 30s), forever — a PC that lost its network for
+    /// hours must come back on its own once the network does.
+    /// Settings are re-read and the portsProvider re-evaluated on every attempt,
+    /// so a re-pair or services started after the first connect are picked up.
+    /// Calling it again replaces the previous loop.
     /// </summary>
-    public void AutoReconnectLoop(AppSettings settings, Func<IReadOnlyList<int>> portsProvider)
+    public void AutoReconnectLoop(Func<IReadOnlyList<int>> portsProvider)
     {
+        if (_disposed) return;
+        // Cancel, not dispose: Disconnect() may still call Cancel() on it.
         _reconnectCts?.Cancel();
-        _reconnectCts = new CancellationTokenSource();
-        var ct = _reconnectCts.Token;
+        var cts = new CancellationTokenSource();
+        _reconnectCts = cts;
+        var ct = cts.Token;
 
-        Task.Run(async () =>
+        _ = Task.Run(async () =>
         {
             int delaySeconds = 1;
+            bool wasUp = IsConnected;
 
             while (!ct.IsCancellationRequested)
             {
-                await Task.Delay(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
-
-                if (!IsConnected)
+                // Any failure of one attempt is logged and retried — an exception
+                // escaping this loop would end reconnects for good, silently.
+                try
                 {
-                    TunnelLog?.Invoke($"Connection lost. Reconnecting in {delaySeconds}s...");
-                    await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct).ConfigureAwait(false);
-
-                    try
-                    {
-                        await Connect(settings, portsProvider, ct).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
+                    await Task.Delay(LivenessCheckInterval, ct).ConfigureAwait(false);
 
                     if (IsConnected)
+                    {
+                        wasUp = true;
                         delaySeconds = 1;
+                        continue;
+                    }
+
+                    if (wasUp)
+                    {
+                        // The session died on its own: nothing else reports that,
+                        // so the UI would keep showing "Connected".
+                        wasUp = false;
+                        TunnelLog?.Invoke("Connection lost.");
+                        ConnectionStatusChanged?.Invoke(false);
+                    }
+
+                    TunnelLog?.Invoke($"Reconnecting in {delaySeconds}s...");
+                    await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct).ConfigureAwait(false);
+                    await Connect(_settingsService.Load(), portsProvider, ct).ConfigureAwait(false);
+
+                    if (IsConnected)
+                    {
+                        wasUp = true;
+                        delaySeconds = 1;
+                    }
                     else
-                        delaySeconds = Math.Min(delaySeconds * 2, 30);
+                    {
+                        delaySeconds = Math.Min(delaySeconds * 2, MaxReconnectDelaySeconds);
+                    }
                 }
-                else
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
-                    delaySeconds = 1;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    TunnelLog?.Invoke($"Reconnect attempt failed: {ex.Message}");
+                    delaySeconds = Math.Min(delaySeconds * 2, MaxReconnectDelaySeconds);
                 }
             }
-        }, ct);
+        });
     }
 
     private void OnHostKeyReceived(object? sender, Renci.SshNet.Common.HostKeyEventArgs e)
