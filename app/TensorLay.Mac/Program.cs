@@ -11,6 +11,7 @@ internal static class Program
         // Before anything spawns a process: a Finder-launched app has a bare
         // PATH, and services/installers need our tools dir + Homebrew on it.
         PlatformEnv.Initialize();
+        AppNap.Disable();
         return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
     }
 

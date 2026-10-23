@@ -136,7 +136,11 @@ public static partial class ServiceRegistry
                 "-3.10 -m pip install torch==2.3.1 torchvision==0.18.1",
                 "-3.10 -m pip install scikit-build-core pybind11 cmake ninja"
             },
-            RequirementsReplacements = TripoSrRequirementsReplacements(),
+            // xatlas==0.0.9 has no macOS arm64 wheel and its sdist bundles a
+            // pybind11 that CMake 4 rejects; 0.0.10 ships the wheel, same
+            // parametrize() API that TripoSR calls.
+            RequirementsReplacements = WithEntries(TripoSrRequirementsReplacements(),
+                ("xatlas", "xatlas==0.0.10")),
             PostInstallCommands = new List<string>
             {
                 "-m pip install --no-build-isolation " + TorchMcubesSource

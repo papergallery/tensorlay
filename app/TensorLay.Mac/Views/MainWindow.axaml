@@ -140,7 +140,7 @@
                     <Border Classes="card" CornerRadius="16" Padding="24,20" Margin="0,0,0,28">
                         <Grid ColumnDefinitions="*,Auto,*,Auto,*,Auto,*">
                             <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                <TextBlock Text="{Binding GpuInfo.GpuName, FallbackValue='No GPU', TargetNullValue='No GPU'}"
+                                <TextBlock TextTrimming="CharacterEllipsis" Text="{Binding GpuInfo.GpuName, FallbackValue='No GPU', TargetNullValue='No GPU'}"
                                            FontSize="17" FontWeight="Bold"/>
                                 <TextBlock Text="GPU detected" FontSize="11" Foreground="#6B6B6B" Margin="0,3,0,0"/>
                             </StackPanel>

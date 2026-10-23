@@ -78,6 +78,8 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <key>LSMinimumSystemVersion</key><string>12.0</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
     <key>NSHighResolutionCapable</key><true/>
+    <!-- Background tunnel/bridge app: no App Nap (see AppNap.cs). -->
+    <key>NSAppSleepDisabled</key><true/>
     <!-- The UI is light-only (Wispr palette); keep the window chrome light too. -->
     <key>NSRequiresAquaSystemAppearance</key><true/>
     <key>CFBundleURLTypes</key>

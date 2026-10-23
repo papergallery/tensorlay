@@ -54,10 +54,14 @@ The VPS-side helper is a small FastAPI service ("the relay") that handles pairin
 ```
 app/                    # the desktop application
   TensorLay.sln
-  TensorLay/            # main WPF project (.NET 8, MVVM via CommunityToolkit.Mvvm)
+  TensorLay.Core/       # shared, platform-neutral: models, services, service registry, view models
+  TensorLay/            # Windows front end (WPF, .NET 8, MVVM via CommunityToolkit.Mvvm)
+  TensorLay.Mac/        # macOS front end (Avalonia) — Apple Silicon
+  TensorLay.Cli/        # headless installer/runner over TensorLay.Core (used by macOS CI)
   installer.nsi         # NSIS script → TensorLay-Setup.exe
   installer/            # branded installer assets (header, sidebar)
-  publish.sh            # one-command build + sign + installer + deploy
+  publish.sh            # Windows: one-command build + sign + installer + deploy
+  publish-mac.sh        # macOS: build + bundle + ad-hoc sign + zip + deploy
 relay/                  # what installs on the VPS
   install.sh            # one-command installer (curl -sL https://tensorlay.com/install.sh | sudo bash)
   relay.py              # FastAPI daemon (port 8090) for pairing + service discovery
@@ -81,6 +85,24 @@ dotnet publish TensorLay/TensorLay.csproj -c Release -r win-x64 \
 ```
 
 For the full release build (NSIS installer + code signing), see [`app/publish.sh`](./app/publish.sh) and [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+### macOS (Apple Silicon)
+
+Also cross-compiles from Linux. [`app/publish-mac.sh`](./app/publish-mac.sh) publishes
+`osx-arm64`, assembles `TensorLay.app`, signs it ad-hoc with
+[rcodesign](https://github.com/indygreg/apple-platform-rs) (the minimum Apple Silicon
+needs to run it) and zips it:
+
+```bash
+cd app
+./publish-mac.sh 0.9.31 --no-deploy     # -> publish-mac/TensorLay.app, publish-mac/TensorLay-mac.zip
+```
+
+The macOS build runs the same services as Windows, on the same ports, from
+[`ServiceRegistry.Mac.cs`](./app/TensorLay.Core/ServiceRegistry.Mac.cs): Python versions
+come from [uv](https://github.com/astral-sh/uv), PyTorch from its Metal (MPS) wheels,
+Ollama from the official darwin build. Every recipe is exercised on GitHub's arm64
+macOS runners by [`.github/workflows/mac.yml`](./.github/workflows/mac.yml).
 
 ## Contributing
 

@@ -44,9 +44,18 @@ never hangs the way thechest's `execute_code` does past ~30s. Output is drained
 asynchronously, so a chatty command can't deadlock on a full pipe. Long-lived
 processes (servers) go through `spawn`, which is fully detached.
 
-`shell` is `powershell` (default) or `cmd`. PowerShell commands are sent via
-`-EncodedCommand`, so arbitrary quotes, newlines and pipes survive and UTF-8
-(Cyrillic paths) is captured intact.
+`shell` depends on the machine — `GET /bridge/health` reports `os` and `shells`
+(bridge 1.1.0+):
+
+- **Windows:** `powershell` (default) or `cmd`. PowerShell commands are sent via
+  `-EncodedCommand`, so arbitrary quotes, newlines and pipes survive and UTF-8
+  (Cyrillic paths) is captured intact.
+- **macOS:** `zsh` (default), `bash` or `sh`. zsh/bash run as login shells
+  (`-l -c`), so Homebrew and the user's PATH are there; the command is passed as
+  one argv entry — no quoting layer. A request for `powershell`/`cmd` from an
+  older client falls back to zsh.
+
+Omit `shell` to get the machine's default on any version.
 
 ## Client (VPS)
 

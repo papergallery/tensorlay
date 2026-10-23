@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive the TensorLay command bridge on the paired PC from the VPS shell.
+"""Drive the TensorLay command bridge on the paired PC or Mac from the VPS shell.
 
 The desktop app (Settings → Command bridge ON) binds an HTTP server on the
 PC's 127.0.0.1:6520 and forwards it over the SSH tunnel, so on the VPS the
@@ -8,8 +8,10 @@ tools/umcp.py — a thin client so an agent can use the bridge without an MCP
 client.
 
   tlbridge.py ping                         — liveness (no token needed)
-  tlbridge.py health                        — hostname, user, cwd on the PC
-  tlbridge.py exec "<command>" [--shell powershell|cmd] [--timeout 60] [--cwd DIR]
+  tlbridge.py health                        — hostname, user, cwd, os ("windows"/"macos"), shells
+  tlbridge.py exec "<command>" [--shell SHELL] [--timeout 60] [--cwd DIR]
+        SHELL: powershell|cmd on Windows, zsh|bash|sh on macOS. Omit it to use
+        the machine's default (powershell / zsh) — check `health` first.
   tlbridge.py spawn "<command>" [--shell ...] [--cwd DIR]   — detached, returns pid
   tlbridge.py ps                            — processes started via spawn
   tlbridge.py kill <pid> [--no-tree]
@@ -85,6 +87,17 @@ def show(obj):
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
 
+SHELLS = ["powershell", "cmd", "zsh", "bash", "sh"]
+
+
+def with_shell(body, shell):
+    # Only send "shell" when asked: an omitted shell means the machine's
+    # default on every bridge version (powershell on Windows, zsh on macOS).
+    if shell:
+        body["shell"] = shell
+    return body
+
+
 def main():
     p = argparse.ArgumentParser(description="TensorLay command bridge client")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -97,13 +110,13 @@ def main():
 
     pe = sub.add_parser("exec")
     pe.add_argument("command")
-    pe.add_argument("--shell", default="powershell", choices=["powershell", "cmd"])
+    pe.add_argument("--shell", default=None, choices=SHELLS)
     pe.add_argument("--timeout", type=int, default=60)
     pe.add_argument("--cwd", default="")
 
     psp = sub.add_parser("spawn")
     psp.add_argument("command")
-    psp.add_argument("--shell", default="powershell", choices=["powershell", "cmd"])
+    psp.add_argument("--shell", default=None, choices=SHELLS)
     psp.add_argument("--cwd", default="")
 
     pk = sub.add_parser("kill")
@@ -135,9 +148,8 @@ def main():
     elif a.cmd == "gpu":
         show(call("GET", "/bridge/gpu"))
     elif a.cmd == "exec":
-        res = call("POST", "/bridge/exec", {
-            "command": a.command, "shell": a.shell,
-            "timeoutSec": a.timeout, "cwd": a.cwd})
+        res = call("POST", "/bridge/exec", with_shell({
+            "command": a.command, "timeoutSec": a.timeout, "cwd": a.cwd}, a.shell))
         # Print streams plainly (that's what a caller wants), then a summary.
         if res.get("stdout"):
             sys.stdout.write(res["stdout"])
@@ -153,8 +165,8 @@ def main():
             sys.stderr.write("[output truncated]\n")
         sys.exit(code if isinstance(code, int) else 0)
     elif a.cmd == "spawn":
-        show(call("POST", "/bridge/spawn", {
-            "command": a.command, "shell": a.shell, "cwd": a.cwd}))
+        show(call("POST", "/bridge/spawn", with_shell({
+            "command": a.command, "cwd": a.cwd}, a.shell)))
     elif a.cmd == "kill":
         show(call("POST", "/bridge/kill", {"pid": a.pid, "tree": not a.no_tree}))
     elif a.cmd == "put":

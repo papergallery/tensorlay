@@ -64,6 +64,14 @@ jobs:
           dotnet app/TensorLay.Cli/bin/Release/net8.0/tensorlay-cli.dll start "$SERVICE" \
             --dir "$HOME/ai-hub" --health-timeout 1800 2>&1 | tee start.log
 
+      - name: Venv packages (on failure)
+        if: failure()
+        run: |
+          for py in "$HOME"/ai-hub/*/.venv/bin/python; do
+            [ -x "$py" ] || continue
+            echo "== $py"; "$py" -m pip list 2>/dev/null | tee -a pip-list.log
+          done
+
       - name: Disk after
         if: always()
         run: df -h ~ | tail -1; du -sh "$HOME/ai-hub"/* 2>/dev/null || true
