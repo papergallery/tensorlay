@@ -1,0 +1,70 @@
+name: mac-app
+
+# Smoke-tests the exact TensorLay.app that publish-mac.sh built and signed on
+# the Linux build host (rcodesign, ad-hoc): downloads it from the test update
+# channel, checks the sha256 recorded in Packaging/ci-smoke.txt, verifies the
+# signature with Apple's codesign, launches it, and uploads a screenshot plus
+# any crash.log. Triggered by bumping ci-smoke.txt after
+# `./publish-mac.sh <version> --channel test`.
+
+on:
+  push:
+    branches: [mac-port]
+    paths:
+      - 'app/TensorLay.Mac/Packaging/ci-smoke.txt'
+      - '.github/workflows/mac-app.yml'
+  workflow_dispatch:
+
+jobs:
+  app:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download test build
+        run: |
+          EXPECTED=$(awk '/^sha256=/{sub("sha256=","");print}' app/TensorLay.Mac/Packaging/ci-smoke.txt)
+          curl -fsSL -o TensorLay-mac.zip https://tensorlay.com/updates/mac-test/TensorLay-mac.zip
+          ACTUAL=$(shasum -a 256 TensorLay-mac.zip | awk '{print $1}')
+          echo "expected $EXPECTED"; echo "actual   $ACTUAL"
+          test "$EXPECTED" = "$ACTUAL"
+          mkdir -p "$HOME/Applications"
+          ditto -x -k TensorLay-mac.zip "$HOME/Applications"
+          ls -la "$HOME/Applications/TensorLay.app/Contents/MacOS"
+
+      - name: Verify signature (Apple codesign)
+        run: |
+          APP="$HOME/Applications/TensorLay.app"
+          codesign -dv --verbose=4 "$APP" 2>&1 | tee codesign.log
+          codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | tee -a codesign.log
+          spctl --assess --type execute -vv "$APP" 2>&1 | tee -a codesign.log || true
+
+      - name: Launch
+        run: |
+          open "$HOME/Applications/TensorLay.app"
+          sleep 25
+          pgrep -lf TensorLay.app || (echo "TensorLay is not running"; exit 1)
+          screencapture -x shot.png || true
+          # Let the GPU poller and services init a bit more, then a second frame.
+          sleep 10
+          screencapture -x shot2.png || true
+
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          D="$HOME/Library/Application Support/TensorLay"
+          ls -la "$D" 2>/dev/null || true
+          cp "$D/crash.log" crash.log 2>/dev/null || echo "no crash.log"
+          log show --last 5m --predicate 'process == "TensorLay"' --style compact > unified.log 2>/dev/null || true
+          ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i tensorlay && cp ~/Library/Logs/DiagnosticReports/*TensorLay* . 2>/dev/null || true
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-app-smoke
+          path: |
+            *.png
+            *.log
+            *.ips

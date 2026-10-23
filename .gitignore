@@ -42,3 +42,6 @@ Screenshot_*.png
 # OS junk
 .DS_Store
 Thumbs.db
+
+# macOS build output (publish-mac.sh)
+publish-mac/

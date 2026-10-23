@@ -1,0 +1,3 @@
+# Build under test by .github/workflows/mac-app.yml (bump to re-run)
+version=0.9.31
+sha256=1c69196445722456800b922d50c7f7c45c9aa6eb78b3edfce0f2f616862e2cc6
