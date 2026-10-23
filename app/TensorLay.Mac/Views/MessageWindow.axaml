@@ -1,0 +1,15 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="TensorLay.Mac.Views.MessageWindow"
+        Width="440" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel Margin="24,20">
+        <StackPanel Orientation="Horizontal">
+            <Ellipse x:Name="KindDot" Width="10" Height="10" VerticalAlignment="Center" Margin="0,0,10,0"/>
+            <TextBlock x:Name="TitleText" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" MaxWidth="360"/>
+        </StackPanel>
+        <SelectableTextBlock x:Name="BodyText" Margin="0,12,0,0" TextWrapping="Wrap" FontSize="13" Foreground="#4A4A4A"/>
+        <Button Classes="primary" Content="OK" Padding="24,7" Margin="0,20,0,0" HorizontalAlignment="Right"
+                IsDefault="True" IsCancel="True" Click="OnOkClick"/>
+    </StackPanel>
+</Window>

@@ -1,0 +1,56 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="TensorLay.Mac.Views.PairingWindow"
+        Title="Connect to VPS"
+        Width="560" Height="600" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+    <Border Background="{StaticResource BackgroundBrush}" Padding="32,24,32,20">
+        <DockPanel>
+            <StackPanel DockPanel.Dock="Top" Margin="0,0,0,16">
+                <TextBlock Text="Connect to VPS" FontSize="18" FontWeight="Bold" Margin="0,0,0,6"/>
+                <TextBlock FontSize="12" Foreground="#6B6B6B" TextWrapping="Wrap"
+                           Text="Run this command on your VPS to install the relay:"/>
+                <Border Classes="card" CornerRadius="8" Padding="12,8" Margin="0,8,0,0">
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" x:Name="CopyBtn" Classes="secondary" Content="Copy"
+                                Padding="10,4" FontSize="11" Click="OnCopyCommand"/>
+                        <SelectableTextBlock x:Name="InstallCmd" FontFamily="{StaticResource MonoFont}" FontSize="11.5"
+                                             VerticalAlignment="Center"
+                                             Text="curl -sL https://tensorlay.com/install.sh | sudo bash"/>
+                    </DockPanel>
+                </Border>
+            </StackPanel>
+
+            <DockPanel DockPanel.Dock="Bottom" Margin="0,20,0,0">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="CancelBtn" Classes="secondary" Content="Cancel" Padding="18,9" Click="OnCancelClicked"/>
+                    <Button x:Name="PairBtn" Classes="primary" Content="Connect" Padding="24,9" Margin="10,0,0,0"
+                            FontWeight="SemiBold" IsDefault="True" Click="OnPairClicked"/>
+                </StackPanel>
+                <TextBlock x:Name="StatusText" VerticalAlignment="Center" FontSize="12" Foreground="#9B9B9B"
+                           TextWrapping="Wrap" MaxWidth="260" HorizontalAlignment="Left"/>
+            </DockPanel>
+
+            <ScrollViewer>
+                <StackPanel>
+                    <TextBlock Text="VPS IP ADDRESS" Classes="caption" Margin="0,0,0,5"/>
+                    <TextBox x:Name="VpsIpInput" Margin="0,0,0,14" Padding="10,8"/>
+                    <TextBlock Text="PAIRING CODE" Classes="caption" Margin="0,0,0,5"/>
+                    <TextBox x:Name="PairingCodeInput" Margin="0,0,0,16" FontSize="15" FontWeight="Bold"
+                             Padding="10,8" MaxLength="8"/>
+                    <Border Classes="card" CornerRadius="8" Padding="16,14">
+                        <StackPanel>
+                            <TextBlock Text="How it works" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <TextBlock FontSize="12" Foreground="#6B6B6B" TextWrapping="Wrap" LineHeight="20">
+                                <Run FontWeight="SemiBold" Text="1."/><Run Text=" Run the command above on your VPS"/><LineBreak/>
+                                <Run FontWeight="SemiBold" Text="2."/><Run Text=" Copy the pairing code it generates"/><LineBreak/>
+                                <Run FontWeight="SemiBold" Text="3."/><Run Text=" Enter your VPS IP and code, click Connect"/><LineBreak/>
+                                <Run FontWeight="SemiBold" Text="4."/><Run Text=" SSH keys are exchanged automatically"/>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </DockPanel>
+    </Border>
+</Window>

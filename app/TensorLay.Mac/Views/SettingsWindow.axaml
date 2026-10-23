@@ -1,0 +1,120 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="TensorLay.Mac.Views.SettingsWindow"
+        Title="Settings"
+        Width="580" Height="620" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+    <Border Padding="32,24">
+        <DockPanel>
+            <StackPanel DockPanel.Dock="Top" Margin="0,0,0,20">
+                <TextBlock Text="Settings" FontSize="18" FontWeight="SemiBold"/>
+                <TextBlock Text="SSH tunnel and installation configuration" FontSize="12" Foreground="#9B9B9B" Margin="0,4,0,0"/>
+            </StackPanel>
+
+            <DockPanel DockPanel.Dock="Bottom" Margin="0,20,0,0">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Classes="secondary brand" Content="Test Connection" Padding="14,8" Margin="0,0,8,0"
+                            Command="{Binding TestConnectionCommand}"/>
+                    <Button Classes="primary" Content="Save" Width="90" Padding="0,8" Margin="0,0,8,0"
+                            IsDefault="True" Click="OnSaveClicked"/>
+                    <Button Classes="secondary" Content="Cancel" Width="90" Padding="0,8" IsCancel="True"
+                            Click="OnCancelClicked"/>
+                </StackPanel>
+                <TextBlock Text="{Binding ConnectionTestResult}" Foreground="#6B6B6B" FontSize="12"
+                           VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="240" HorizontalAlignment="Left"/>
+            </DockPanel>
+
+            <ScrollViewer>
+                <StackPanel Margin="0,0,12,0">
+                    <TextBlock Text="VPS HOST" Classes="caption" Margin="0,0,0,6"/>
+                    <TextBox Text="{Binding VpsHost}" Margin="0,0,0,16"/>
+
+                    <TextBlock Text="VPS USER" Classes="caption" Margin="0,0,0,6"/>
+                    <TextBox Text="{Binding VpsUser}" Margin="0,0,0,16"/>
+
+                    <TextBlock Text="SSH PORT" Classes="caption" Margin="0,0,0,6"/>
+                    <TextBox Text="{Binding SshPort}" Margin="0,0,0,16"/>
+
+                    <TextBlock Text="SSH KEY PATH" Classes="caption" Margin="0,0,0,6"/>
+                    <DockPanel Margin="0,0,0,16">
+                        <Button DockPanel.Dock="Right" Classes="secondary" Content="…" Width="36" Padding="0,7" Margin="8,0,0,0"
+                                Command="{Binding BrowseSshKeyCommand}"/>
+                        <TextBox Text="{Binding SshKeyPath}"/>
+                    </DockPanel>
+
+                    <!-- Re-pair (v0.9.26+): the tunnel pins the VPS host keys from /pair. -->
+                    <TextBlock Text="PAIRING" Classes="caption" Margin="0,0,0,6"/>
+                    <DockPanel Margin="0,0,0,20">
+                        <Button DockPanel.Dock="Right" Classes="secondary brand" Content="Re-pair…" Padding="14,7"
+                                Margin="12,0,0,0" VerticalAlignment="Top" Click="OnRepairClicked"/>
+                        <TextBlock Classes="hint" VerticalAlignment="Center"
+                                   Text="Run the pairing handshake again with a fresh code from the VPS. Use it after the relay moved to a new server or its SSH host keys changed (the tunnel log says HOST KEY MISMATCH)."/>
+                    </DockPanel>
+
+                    <TextBlock Text="INSTALL DIRECTORY" Classes="caption" Margin="0,0,0,6"/>
+                    <DockPanel Margin="0,0,0,20">
+                        <Button DockPanel.Dock="Right" Classes="secondary" Content="…" Width="36" Padding="0,7" Margin="8,0,0,0"
+                                Command="{Binding BrowseInstallDirCommand}"/>
+                        <TextBox Text="{Binding InstallDirectory}"/>
+                    </DockPanel>
+
+                    <Border Height="1" Background="#EBEBEB" Margin="0,0,0,20"/>
+
+                    <TextBlock Text="OPTIONS" Classes="caption" Margin="0,0,0,10"/>
+                    <!-- AutostartWithWindows is the shared setting; on macOS it
+                         drives a LaunchAgent (see LoginItem). -->
+                    <CheckBox IsChecked="{Binding AutostartWithWindows}" Content="Open TensorLay at login" Margin="0,0,0,6"/>
+                    <CheckBox IsChecked="{Binding AutoconnectTunnel}" Content="Auto-connect tunnel on startup"/>
+
+                    <Border Height="1" Background="#EBEBEB" Margin="0,20"/>
+
+                    <TextBlock Text="REMOTE INSTALL REQUESTS" Classes="caption" Margin="0,0,0,10"/>
+                    <CheckBox IsChecked="{Binding AllowRemoteInstallRequests}" IsEnabled="{Binding RemoteInstallSupported}"
+                              Content="Allow the VPS agent to request model downloads" Margin="0,0,0,4"/>
+                    <TextBlock Classes="hint" Margin="28,0,0,0"
+                               Text="Each request opens an approval dialog before any download starts. Pair against a v0.9.0+ relay to enable this."/>
+
+                    <Border Height="1" Background="#EBEBEB" Margin="0,20"/>
+
+                    <TextBlock Text="REMOTE DIAGNOSTIC LOGS" Classes="caption" Margin="0,0,0,10"/>
+                    <CheckBox IsChecked="{Binding AllowRemoteLogRequests}" IsEnabled="{Binding RemoteInstallSupported}"
+                              Content="Allow the VPS agent to fetch local log files" Margin="0,0,0,4"/>
+                    <TextBlock Classes="hint" Margin="28,0,0,0"
+                               Text="When on, agent-initiated requests for diagnostic logs are answered with the recent downloads-YYYY-MM-DD.log files and crash.log (last few days, capped at 5 MB)."/>
+
+                    <Border Height="1" Background="#EBEBEB" Margin="0,20"/>
+
+                    <TextBlock Text="REMOTE MODEL CLEANUP" Classes="caption" Margin="0,0,0,10"/>
+                    <CheckBox IsChecked="{Binding AllowRemoteModelCleanup}" IsEnabled="{Binding RemoteInstallSupported}"
+                              Content="Allow the VPS agent to see installed models and request deletions" Margin="0,0,0,4"/>
+                    <TextBlock Classes="hint" Margin="28,0,0,0"
+                               Text="When on, the list of model files (names, sizes, folders) and free disk space is shared with the VPS relay so an agent can suggest what to clean up. Every deletion request opens a window where you pick what actually gets deleted."/>
+
+                    <Border Height="1" Background="#EBEBEB" Margin="0,20"/>
+
+                    <TextBlock Text="COMMAND BRIDGE" Classes="caption" Margin="0,0,0,10"/>
+                    <CheckBox IsChecked="{Binding AllowRemoteCommandBridge}" IsEnabled="{Binding RemoteInstallSupported}"
+                              Content="Let the VPS agent run commands on this Mac" Margin="0,0,0,4"/>
+                    <Border Background="#FEF6F0" BorderBrush="#F3D9C4" BorderThickness="1" CornerRadius="6"
+                            Padding="12,10" Margin="28,4,0,0">
+                        <TextBlock FontSize="11" Foreground="#9A5B2E" TextWrapping="Wrap"
+                                   Text="This is the most powerful switch here. When on, an agent on your VPS can run shell commands (zsh), move files, and start or stop services on THIS Mac over TensorLay's own tunnel. It only works while this app is open and this box is checked, and every request must carry the token below. Leave it off unless you are actively using an agent that needs it."/>
+                    </Border>
+
+                    <TextBlock Text="BRIDGE TOKEN" Classes="caption" Margin="28,16,0,6"/>
+                    <Grid ColumnDefinitions="*,Auto,Auto" Margin="28,0,0,0">
+                        <TextBox Text="{Binding RemoteCommandBridgeToken, Mode=OneWay}" IsReadOnly="True"
+                                 FontFamily="{StaticResource MonoFont}" FontSize="11" Padding="8,6"/>
+                        <Button Grid.Column="1" Classes="secondary" Content="Copy" Width="64" Margin="8,0,0,0"
+                                Command="{Binding CopyBridgeTokenCommand}"/>
+                        <Button Grid.Column="2" Classes="secondary" Content="Regenerate" Width="96" Margin="8,0,0,0"
+                                Command="{Binding RegenerateBridgeTokenCommand}"/>
+                    </Grid>
+                    <TextBlock Classes="hint" Margin="28,8,0,0">
+                        <Run Text="Copy this token to the VPS as "/><Run FontFamily="{StaticResource MonoFont}" Text="~/.tensorlay_bridge_token"/><Run Text=" (chmod 600). Regenerating rotates the secret — the old token stops working after you Save. The bridge listens on "/><Run FontFamily="{StaticResource MonoFont}" Text="127.0.0.1:"/><Run FontFamily="{StaticResource MonoFont}" Text="{Binding RemoteCommandBridgePort}"/><Run Text=" and is forwarded over the tunnel while connected."/>
+                    </TextBlock>
+                </StackPanel>
+            </ScrollViewer>
+        </DockPanel>
+    </Border>
+</Window>

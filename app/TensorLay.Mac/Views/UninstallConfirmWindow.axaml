@@ -1,0 +1,20 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="TensorLay.Mac.Views.UninstallConfirmWindow"
+        Title="Uninstall service"
+        Width="520" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel Margin="24,20">
+        <TextBlock x:Name="HeadlineText" FontSize="18" FontWeight="SemiBold"/>
+        <TextBlock x:Name="BodyText" Margin="0,12,0,0" TextWrapping="Wrap" FontSize="13" Foreground="#4A4A4A"/>
+        <TextBlock x:Name="PathText" Margin="0,8,0,0" TextWrapping="Wrap" FontSize="12" Foreground="#9A8E78"
+                   FontFamily="{StaticResource MonoFont}"/>
+        <CheckBox x:Name="KeepModelsCheckbox" Margin="0,16,0,0" IsChecked="True"
+                  Content="Keep downloaded models (preserves the models folder)"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+            <Button Classes="secondary" Content="Cancel" Padding="18,7" MinWidth="92" Margin="0,0,8,0"
+                    IsCancel="True" Click="OnCancelClick"/>
+            <Button Classes="solid-danger" Content="Move to Trash" Padding="18,7" MinWidth="92" Click="OnUninstallClick"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

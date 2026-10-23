@@ -1,0 +1,37 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="TensorLay.Mac.Views.UpdateWindow"
+        Title="TensorLay Update"
+        Width="420" Height="250" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="32,24" RowDefinitions="Auto,*,Auto">
+        <StackPanel Margin="0,0,0,16">
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                <Grid Width="26" Height="26" Margin="0,0,10,0">
+                    <Ellipse Width="16" Height="16" StrokeThickness="2.2" Stroke="#6C5CE7" HorizontalAlignment="Left"/>
+                    <Ellipse Width="16" Height="16" StrokeThickness="2.2" Stroke="#2ECC71" HorizontalAlignment="Right"/>
+                </Grid>
+                <TextBlock FontSize="13.5" FontWeight="SemiBold" VerticalAlignment="Center">
+                    <Run Text="Tensor" Foreground="#6C5CE7"/><Run Text="Lay" Foreground="#2ECC71"/>
+                </TextBlock>
+            </StackPanel>
+            <TextBlock x:Name="TitleText" Text="Update available" FontSize="18" FontWeight="Bold" Margin="0,0,0,4"/>
+            <TextBlock x:Name="VersionText" FontSize="12" Foreground="#9B9B9B"/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" x:Name="ProgressPanel" IsVisible="False" VerticalAlignment="Center">
+            <ProgressBar x:Name="DownloadBar" Minimum="0" Maximum="100" Value="0"/>
+            <DockPanel Margin="0,8,0,0">
+                <TextBlock x:Name="ProgressPercent" DockPanel.Dock="Right" FontSize="12" Foreground="#9B9B9B"
+                           FontFamily="{StaticResource MonoFont}"/>
+                <TextBlock x:Name="ProgressStatus" Text="Downloading..." FontSize="12" Foreground="#6B6B6B" TextWrapping="Wrap"/>
+            </DockPanel>
+        </StackPanel>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="SkipButton" Classes="secondary" Content="Skip" Padding="16,8" Click="OnSkipClicked"/>
+            <Button x:Name="UpdateButton" Classes="primary" Content="Update now" Padding="20,8" Margin="10,0,0,0"
+                    FontWeight="SemiBold" Click="OnUpdateClicked"/>
+        </StackPanel>
+    </Grid>
+</Window>

@@ -42,6 +42,11 @@ public class ProcessManager : IDisposable
         string workingDir = string.IsNullOrEmpty(service.RelativeInstallPath)
             ? installDir
             : Path.Combine(installDir, service.RelativeInstallPath);
+        // Services without a repo of their own (Ollama) run from the install
+        // root, which doesn't exist until the first git-based install creates
+        // it. A missing working directory makes the spawn fail outright
+        // (macOS reports it as ENOENT for the executable), so ensure it.
+        Directory.CreateDirectory(workingDir);
 
         // Apply in-place source patches before launch (idempotent). See
         // ServiceDefinition.SourceReplacements: AllTalk's script.py spawns its

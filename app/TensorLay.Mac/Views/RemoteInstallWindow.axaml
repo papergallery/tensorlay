@@ -1,0 +1,66 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="TensorLay.Mac.Views.RemoteInstallWindow"
+        Title="Remote Install Request"
+        Width="560" Height="500" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="36,24,36,24" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,Auto">
+        <StackPanel Grid.Row="0" Margin="0,0,0,16">
+            <TextBlock Text="REQUEST FROM" Classes="caption"/>
+            <TextBlock Text="{Binding AgentLabel}" FontSize="14" FontWeight="SemiBold" Margin="0,3,0,0"/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Margin="0,0,0,12">
+            <TextBlock Text="MODEL" Classes="caption"/>
+            <TextBlock Text="{Binding DisplayName}" FontSize="16" FontWeight="SemiBold" Margin="0,3,0,2" TextWrapping="Wrap"/>
+            <TextBlock Text="{Binding SourceUrl}" FontSize="11" Foreground="#9B9B9B" FontFamily="{StaticResource MonoFont}"
+                       TextWrapping="Wrap" MaxLines="3" TextTrimming="CharacterEllipsis"/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="2" Margin="0,0,0,12">
+            <TextBlock Text="INSTALL TO" Classes="caption"/>
+            <TextBlock FontSize="13" Margin="0,3,0,0" TextWrapping="Wrap">
+                <Run Text="{Binding ServiceLabel}" FontWeight="SemiBold"/><Run Text="  —  "/><Run Text="{Binding TargetFolder}" FontFamily="{StaticResource MonoFont}" Foreground="#6B6B6B"/>
+            </TextBlock>
+        </StackPanel>
+
+        <StackPanel Grid.Row="3" Margin="0,0,0,12">
+            <TextBlock Text="SIZE" Classes="caption"/>
+            <TextBlock Text="{Binding SizeMbDisplay}" FontSize="13" Margin="0,3,0,0" FontFamily="{StaticResource MonoFont}"/>
+        </StackPanel>
+
+        <Border Grid.Row="4" Background="#F7F6F3" CornerRadius="6" Padding="12,10" Margin="0,0,0,12"
+                IsVisible="{Binding HasReason}">
+            <StackPanel>
+                <TextBlock Text="REASON" Classes="caption" Margin="0,0,0,4"/>
+                <TextBlock Text="{Binding Reason}" FontSize="12" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
+        <StackPanel Grid.Row="6" Margin="0,0,0,12" IsVisible="{Binding IsDownloading}">
+            <DockPanel Margin="0,0,0,4">
+                <TextBlock DockPanel.Dock="Right" Text="{Binding DownloadProgress, StringFormat='{}{0:F0}%'}" FontSize="11" Foreground="#9B9B9B"/>
+                <TextBlock Text="{Binding StatusMessage}" FontSize="11" Foreground="#6B6B6B"/>
+            </DockPanel>
+            <ProgressBar Minimum="0" Maximum="100" Value="{Binding DownloadProgress}"/>
+        </StackPanel>
+
+        <DockPanel Grid.Row="7">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button Classes="danger" Content="Cancel Download" Padding="18,8"
+                        Command="{Binding CancelDownloadCommand}" IsVisible="{Binding IsDownloading}"/>
+                <Button Classes="secondary" Content="Reject" Padding="18,8" Margin="8,0,0,0"
+                        Command="{Binding RejectCommand}" IsVisible="{Binding !IsDownloading}"/>
+                <Button Classes="primary" Content="Approve and Download" Padding="18,8" Margin="8,0,0,0"
+                        Command="{Binding ApproveCommand}" IsVisible="{Binding !IsDownloading}"/>
+            </StackPanel>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock FontSize="10.5" Foreground="#9B9B9B">
+                    <Run Text="Expires "/><Run Text="{Binding ExpiresDisplay}" FontWeight="SemiBold"/>
+                </TextBlock>
+                <Button Classes="link" Content="Always reject from this source" Margin="0,4,0,0" HorizontalAlignment="Left"
+                        Command="{Binding AlwaysRejectCommand}" IsVisible="{Binding !IsDownloading}"/>
+            </StackPanel>
+        </DockPanel>
+    </Grid>
+</Window>

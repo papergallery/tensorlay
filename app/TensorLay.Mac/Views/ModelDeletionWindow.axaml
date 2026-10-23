@@ -1,0 +1,88 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="TensorLay.Mac.Views.ModelDeletionWindow"
+        Title="{Binding WindowTitle}"
+        Width="640" Height="620" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="36,20,36,24" RowDefinitions="Auto,Auto,Auto,*,Auto,Auto">
+        <StackPanel Grid.Row="0" Margin="0,0,0,14" IsVisible="{Binding IsRemote}">
+            <TextBlock Text="REQUEST FROM" Classes="caption"/>
+            <TextBlock Text="{Binding AgentLabel}" FontSize="14" FontWeight="SemiBold" Margin="0,3,0,0"/>
+        </StackPanel>
+
+        <Border Grid.Row="1" Background="#F7F6F3" CornerRadius="6" Padding="12,10" Margin="0,0,0,14"
+                IsVisible="{Binding HasReason}">
+            <StackPanel>
+                <TextBlock Text="REASON" Classes="caption" Margin="0,0,0,4"/>
+                <TextBlock Text="{Binding Reason}" FontSize="12" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
+        <DockPanel Grid.Row="2" Margin="0,0,0,6">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" IsVisible="{Binding ShowDecisionButtons}">
+                <Button Classes="link" Content="Select all" Command="{Binding SelectAllCommand}" CommandParameter="all"/>
+                <TextBlock Text="  ·  " FontSize="11" Foreground="#C0C0C0"/>
+                <Button Classes="link" Content="None" Command="{Binding SelectAllCommand}" CommandParameter="none"/>
+            </StackPanel>
+            <TextBlock Text="FILES TO DELETE" Classes="caption" VerticalAlignment="Bottom"/>
+        </DockPanel>
+
+        <Border Grid.Row="3" BorderBrush="#EBEBEB" BorderThickness="1" CornerRadius="8">
+            <Panel>
+                <TextBlock Text="Checking files…" FontSize="12" Foreground="#9B9B9B"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsLoading}"/>
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding Rows}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Classes="row" Padding="12,9">
+                                    <Grid ColumnDefinitions="Auto,*,Auto">
+                                        <CheckBox VerticalAlignment="Top" Margin="0,0,6,0" MinWidth="0"
+                                                  IsChecked="{Binding IsSelected}" IsEnabled="{Binding CanDelete}"/>
+                                        <StackPanel Grid.Column="1" ToolTip.Tip="{Binding Location}">
+                                            <TextBlock Text="{Binding FileName}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock FontSize="11" Foreground="#9B9B9B" Margin="0,1,0,0" TextTrimming="CharacterEllipsis">
+                                                <Run Text="{Binding ServiceName}"/><Run Text="  ·  "/><Run Text="{Binding Folder}"/>
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding Problem}" FontSize="11" Foreground="#E67E22" Margin="0,2,0,0"
+                                                       TextWrapping="Wrap" IsVisible="{Binding HasProblem}"/>
+                                            <Panel IsVisible="{Binding HasResult}" Margin="0,2,0,0">
+                                                <TextBlock Text="{Binding ResultText}" FontSize="11" Foreground="#27AE60" TextWrapping="Wrap"
+                                                           IsVisible="{Binding !ResultIsError}"/>
+                                                <TextBlock Text="{Binding ResultText}" FontSize="11" Foreground="#E74C3C" TextWrapping="Wrap"
+                                                           IsVisible="{Binding ResultIsError}"/>
+                                            </Panel>
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="2" Text="{Binding SizeDisplay}" FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="12" Foreground="#6B6B6B" VerticalAlignment="Top" Margin="12,2,0,0"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Panel>
+        </Border>
+
+        <StackPanel Grid.Row="4" Margin="0,12,0,14">
+            <TextBlock Text="{Binding Summary}" FontSize="13" FontWeight="SemiBold" IsVisible="{Binding !IsFinished}"/>
+            <TextBlock Text="{Binding StatusMessage}" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap" IsVisible="{Binding IsFinished}"/>
+            <TextBlock Classes="hint" Margin="0,3,0,0" IsVisible="{Binding ShowDecisionButtons}"
+                       Text="Files are deleted permanently. They do not go to the Trash."/>
+        </StackPanel>
+
+        <DockPanel Grid.Row="5">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button Classes="secondary" Content="{Binding DismissButtonText}" Padding="18,8"
+                        Command="{Binding DismissCommand}" IsVisible="{Binding ShowDecisionButtons}"/>
+                <Button Classes="danger" Content="{Binding DeleteButtonText}" Padding="18,8" Margin="8,0,0,0"
+                        Command="{Binding DeleteSelectedCommand}" IsVisible="{Binding ShowDecisionButtons}"/>
+                <Button Classes="primary" Content="Close" Padding="18,8" Margin="8,0,0,0"
+                        Command="{Binding DismissCommand}" IsVisible="{Binding IsFinished}"/>
+            </StackPanel>
+            <TextBlock VerticalAlignment="Center" FontSize="10.5" Foreground="#9B9B9B" IsVisible="{Binding IsRemote}">
+                <Run Text="Expires "/><Run Text="{Binding ExpiresDisplay}" FontWeight="SemiBold"/>
+            </TextBlock>
+        </DockPanel>
+    </Grid>
+</Window>

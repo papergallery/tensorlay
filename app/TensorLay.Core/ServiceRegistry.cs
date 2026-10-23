@@ -49,6 +49,7 @@ public static partial class ServiceRegistry
             {
                 "-3.10 -m pip install --force-reinstall torch==2.3.1+cu121 torchvision==0.18.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121"
             },
+            PostInstallCommands = ForgeLaunchPackages(),
             StartExecutable = "py",
             StartArguments = "-3.10 launch.py --api --listen --port 7860 --no-download-sd-model",
             ModelsSubfolder = "models/Stable-diffusion",
@@ -160,19 +161,23 @@ public static partial class ServiceRegistry
                 // cu121 matches the upstream torchmcubes build matrix and
                 // the same wheel set that Forge uses. RTX 30/40 ok; RTX 50
                 // gets the cu121 warning from GpuMonitor (Forge path).
-                "-3.10 -m pip install --force-reinstall torch==2.3.1+cu121 torchvision==0.18.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121"
+                "-3.10 -m pip install --force-reinstall torch==2.3.1+cu121 torchvision==0.18.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121",
+                // Build tooling for torchmcubes (see PostInstall).
+                "-3.10 -m pip install scikit-build-core pybind11 cmake ninja"
             },
+            // torchmcubes now refuses to build under pip's build isolation
+            // ("must be built against an installed PyTorch") — found by the
+            // macOS CI run on 2026-10-23; the same requirements.txt line
+            // breaks this install everywhere. Drop it from requirements and
+            // build it in PostInstall without isolation, against the venv's
+            // torch, pinned to a known commit (upstream reworked its build
+            // in October 2026).
+            RequirementsReplacements = TripoSrRequirementsReplacements(),
             PostInstallCommands = new List<string>
             {
-                // Rebuild torchmcubes from source so CUDA acceleration
-                // actually fires. If the user has no CUDA toolkit, this
-                // command will fail loudly — the install is still usable
-                // (PyPI's CPU wheel was installed by requirements.txt) so
-                // we surface the failure but don't roll back. See README
-                // notes — TODO add an InstallerService.PostInstallOptional
-                // path for steps where failure should be a warning, not a
-                // hard error.
-                "-m pip install --force-reinstall git+https://github.com/tatsy/torchmcubes.git"
+                // Builds with CUDA when the toolkit (nvcc) is present, CPU
+                // kernels otherwise. Needs MSVC Build Tools for the C++ part.
+                "-m pip install --force-reinstall --no-build-isolation " + TorchMcubesSource
             },
             EnvironmentVariables = new Dictionary<string, string>
             {
@@ -315,6 +320,7 @@ public static partial class ServiceRegistry
                 // it back to 2.1.0 anyway, leaving an incoherent env. Install the
                 // 2.1.0 CUDA stack directly so requirements.txt is satisfied as-is.
                 "-3.10 -m pip install --force-reinstall torch==2.1.0+cu121 torchaudio==2.1.0+cu121 torchvision==0.16.0+cu121 --extra-index-url https://download.pytorch.org/whl/cu121",
+                MusicGenFastApiPin,
                 // Relax three upstream pins that no longer resolve cleanly in 2026.
                 // setup.py reads requirements.txt for install_requires, so this single
                 // rewrite fixes BOTH the `pip install -r` step and the editable
@@ -502,6 +508,41 @@ public static partial class ServiceRegistry
             UseSystemInstaller = false,
             UsesVenv = true
         }
+    };
+
+    // Forge's launch.py pip-installs OpenAI CLIP and open_clip from source
+    // archives on first start. Their setup.py imports pkg_resources, which
+    // the setuptools>=81 that pip puts in an isolated build env no longer
+    // has, so the first Start died with "Couldn't install clip" (macOS CI,
+    // 2026-10-23; same on Windows). Install both at install time WITHOUT
+    // build isolation — against the venv's setuptools 69.5.1 pinned by
+    // requirements_versions.txt — from the exact URLs launch_utils.py uses;
+    // launch.py then finds them installed and skips its own attempt.
+    private static List<string> ForgeLaunchPackages() => new()
+    {
+        "-m pip install wheel",
+        "-m pip install --no-build-isolation https://github.com/openai/CLIP/archive/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1.zip",
+        "-m pip install --no-build-isolation https://github.com/mlfoundations/open_clip/archive/bb6e834e9c70d9c27d0dc3ecedeebeaeb1ffad6b.zip",
+    };
+
+    // audiocraft's demo runs on gradio 4.36 (capped in the requirements
+    // rewrite), whose index route calls Starlette's old
+    // TemplateResponse(name, context) form. Current FastAPI pulls a Starlette
+    // without it and every page 500s ("unhashable type: 'dict'"), which
+    // gradio reports as "localhost is not accessible" and exits. fastapi
+    // 0.112.4 caps starlette <0.39. Installed before requirements.txt so the
+    // resolver keeps it.
+    private const string MusicGenFastApiPin = "-3.10 -m pip install \"fastapi==0.112.4\"";
+
+    // torchmcubes, pinned (2026-09-10 merge) and installed without build
+    // isolation by both catalogues; see the TripoSR entries.
+    private const string TorchMcubesSource =
+        "git+https://github.com/tatsy/torchmcubes.git@879926d0ef58e6ce0ac2630fdecb5e53af7ed3ff";
+
+    private static Dictionary<string, string> TripoSrRequirementsReplacements() => new()
+    {
+        // NormalizePackageName("git+https://github.com/tatsy/torchmcubes.git")
+        { "git+https://github-com/tatsy/torchmcubes-git", "" },
     };
 
     // AllTalk's requirement swaps and start-time source patches are the same

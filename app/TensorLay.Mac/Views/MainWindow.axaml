@@ -1,0 +1,413 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="TensorLay.Mac.Views.MainWindow"
+        Title="TensorLay"
+        Width="1280" Height="800" MinWidth="900" MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaTitleBarHeightHint="40"
+        Background="White">
+
+    <Grid RowDefinitions="40,*" ColumnDefinitions="240,*">
+
+        <!-- ==================== TITLE BAR ==================== -->
+        <!-- macOS draws the traffic lights over the left 80 px of this strip
+             (extended client area); the logo starts after them. Dragging is
+             handled in code-behind (BeginMoveDrag). -->
+        <Border Grid.Row="0" Grid.ColumnSpan="2" x:Name="TitleBar"
+                Background="White" BorderBrush="{StaticResource SidebarBorderBrush}" BorderThickness="0,0,0,1">
+            <Grid>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="84,0,0,0">
+                    <Grid Width="26" Height="26" Margin="0,0,8,0">
+                        <Ellipse Width="16" Height="16" StrokeThickness="2.2" Stroke="#6C5CE7" HorizontalAlignment="Left"/>
+                        <Ellipse Width="16" Height="16" StrokeThickness="2.2" Stroke="#2ECC71" HorizontalAlignment="Right"/>
+                    </Grid>
+                    <TextBlock FontSize="13.5" FontWeight="SemiBold" VerticalAlignment="Center">
+                        <Run Text="Tensor" Foreground="#6C5CE7"/><Run Text="Lay" Foreground="#2ECC71"/>
+                    </TextBlock>
+                    <Border Background="#F3F0EB" CornerRadius="4" Padding="6,2" Margin="8,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding AppVersion}" FontSize="9" FontWeight="SemiBold" Foreground="#9B9B9B"/>
+                    </Border>
+                </StackPanel>
+
+                <!-- Command-bridge banner: visible only while the bridge listens. -->
+                <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Background="#FEF2F2" BorderBrush="#F3C0C0" BorderThickness="1"
+                        CornerRadius="12" Padding="10,3"
+                        IsVisible="{Binding IsBridgeActive}">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Ellipse Width="7" Height="7" Fill="#E74C3C" VerticalAlignment="Center"/>
+                        <TextBlock Text="Command bridge ON — agent can run commands on this Mac"
+                                   FontSize="11" FontWeight="SemiBold" Foreground="#C0392B"
+                                   VerticalAlignment="Center" Margin="7,0,0,0"/>
+                        <Button Content="Stop" Classes="solid-danger" Margin="10,0,0,0" Padding="10,2"
+                                FontSize="11" CornerRadius="6" Command="{Binding StopBridgeCommand}"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+
+        <!-- ==================== SIDEBAR ==================== -->
+        <Border Grid.Row="1" Grid.Column="0" Background="White"
+                BorderBrush="{StaticResource SidebarBorderBrush}" BorderThickness="0,0,1,0">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Bottom" Margin="12,0,12,12">
+                    <!-- Tunnel status card -->
+                    <Border Background="#F7F6F3" CornerRadius="10" Padding="14,10" Margin="0,0,0,8"
+                            BorderBrush="#F0F0F0" BorderThickness="1">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel>
+                                <TextBlock Text="SSH TUNNEL" FontSize="9" FontWeight="Bold" Foreground="#9B9B9B" Margin="0,0,0,4"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse Width="7" Height="7" Margin="0,0,6,0" VerticalAlignment="Center"
+                                             Fill="#C5C5C5" IsVisible="{Binding !IsTunnelConnected}"/>
+                                    <Ellipse Width="7" Height="7" Margin="0,0,6,0" VerticalAlignment="Center"
+                                             Fill="#2ECC71" IsVisible="{Binding IsTunnelConnected}"/>
+                                    <TextBlock Text="{Binding TunnelStatus}" FontSize="12" FontWeight="Medium" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <Button Classes="secondary" Content="Connect" Padding="8,4" FontSize="11"
+                                        Command="{Binding ConnectTunnelCommand}" IsVisible="{Binding !IsTunnelConnected}"/>
+                                <Button Classes="danger" Content="Disc." Padding="8,4" FontSize="11"
+                                        Command="{Binding DisconnectTunnelCommand}" IsVisible="{Binding IsTunnelConnected}"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Button Classes="nav" Command="{Binding OpenSettingsCommand}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="⚙" FontSize="14" Margin="0,0,10,0" Foreground="#9B9B9B"/>
+                            <TextBlock Text="Settings" VerticalAlignment="Center" Foreground="#9B9B9B"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <StackPanel DockPanel.Dock="Top" Margin="0,8,0,0">
+                    <Button Classes="nav" Command="{Binding NavigateToCommand}" CommandParameter="Dashboard"
+                            Classes.active="{Binding SelectedPage, Converter={StaticResource StringEquals}, ConverterParameter=Dashboard}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="⌂" FontSize="15" Margin="0,0,10,0"/>
+                            <TextBlock Text="Home" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Classes="nav" Command="{Binding NavigateToCommand}" CommandParameter="Services"
+                            Classes.active="{Binding SelectedPage, Converter={StaticResource StringEquals}, ConverterParameter=Services}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="▦" FontSize="15" Margin="0,0,10,0"/>
+                            <TextBlock Text="Services" VerticalAlignment="Center"/>
+                            <Border Background="#E8F8F0" CornerRadius="8" Padding="6,2" Margin="8,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding ActiveServicesCount}" FontSize="10" FontWeight="SemiBold" Foreground="#2ECC71"/>
+                            </Border>
+                        </StackPanel>
+                    </Button>
+                    <Button Classes="nav" Command="{Binding NavigateToCommand}" CommandParameter="Models"
+                            Classes.active="{Binding SelectedPage, Converter={StaticResource StringEquals}, ConverterParameter=Models}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="△" FontSize="15" Margin="0,0,10,0"/>
+                            <TextBlock Text="Models" VerticalAlignment="Center"/>
+                            <Border Background="#6C5CE7" CornerRadius="8" Padding="6,2" Margin="8,0,0,0" VerticalAlignment="Center"
+                                    IsVisible="{Binding HasPendingRemoteTasks}">
+                                <TextBlock Text="{Binding PendingRemoteTaskCount}" FontSize="10" FontWeight="SemiBold" Foreground="White"/>
+                            </Border>
+                        </StackPanel>
+                    </Button>
+                    <Button Classes="nav" Command="{Binding NavigateToCommand}" CommandParameter="Logs"
+                            Classes.active="{Binding SelectedPage, Converter={StaticResource StringEquals}, ConverterParameter=Logs}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="≡" FontSize="15" Margin="0,0,10,0"/>
+                            <TextBlock Text="Logs" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- ==================== CONTENT ==================== -->
+        <Grid Grid.Row="1" Grid.Column="1" Background="{StaticResource BackgroundBrush}">
+
+            <!-- ========== HOME ========== -->
+            <ScrollViewer Padding="36,28,36,24" HorizontalScrollBarVisibility="Disabled"
+                          IsVisible="{Binding SelectedPage, Converter={StaticResource StringEquals}, ConverterParameter=Dashboard}">
+                <StackPanel>
+                    <TextBlock FontSize="16" Foreground="#6B6B6B" Margin="0,0,0,24">
+                        <Run Text="Welcome back, "/><Run Text="User" FontWeight="SemiBold" Foreground="#1A1A1A"/>
+                    </TextBlock>
+
+                    <!-- Stats row. Apple Silicon has unified memory and no
+                         unprivileged temperature sensor, so the slots read
+                         GPU memory / GPU load instead of VRAM / temperature. -->
+                    <Border Classes="card" CornerRadius="16" Padding="24,20" Margin="0,0,0,28">
+                        <Grid ColumnDefinitions="*,Auto,*,Auto,*,Auto,*">
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding GpuInfo.GpuName, FallbackValue='No GPU', TargetNullValue='No GPU'}"
+                                           FontSize="17" FontWeight="Bold"/>
+                                <TextBlock Text="GPU detected" FontSize="11" Foreground="#6B6B6B" Margin="0,3,0,0"/>
+                            </StackPanel>
+                            <Border Grid.Column="1" Width="1" Background="#F0F0F0" Margin="16,0"/>
+                            <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                <TextBlock FontSize="17" FontWeight="Bold" Text="{Binding VramDisplay}"/>
+                                <TextBlock Text="GPU memory in use (unified)" FontSize="11" Foreground="#6B6B6B" Margin="0,3,0,0"/>
+                            </StackPanel>
+                            <Border Grid.Column="3" Width="1" Background="#F0F0F0" Margin="16,0"/>
+                            <StackPanel Grid.Column="4" VerticalAlignment="Center">
+                                <TextBlock FontSize="17" FontWeight="Bold">
+                                    <Run Text="{Binding GpuInfo.GpuUtilPercent, StringFormat='{}{0:F0}', FallbackValue='--'}"/><Run Text=" %" FontSize="11" Foreground="#9B9B9B" FontWeight="Normal"/>
+                                </TextBlock>
+                                <TextBlock Text="GPU load" FontSize="11" Foreground="#6B6B6B" Margin="0,3,0,0"/>
+                            </StackPanel>
+                            <Border Grid.Column="5" Width="1" Background="#F0F0F0" Margin="16,0"/>
+                            <StackPanel Grid.Column="6" VerticalAlignment="Center">
+                                <TextBlock FontSize="17" FontWeight="Bold">
+                                    <Run Text="{Binding ActiveServicesCount}"/><Run Text=" / " FontSize="11" Foreground="#9B9B9B" FontWeight="Normal"/><Run Text="{Binding Services.Count}" FontSize="11" Foreground="#9B9B9B" FontWeight="Normal"/>
+                                </TextBlock>
+                                <TextBlock Text="active services" FontSize="11" Foreground="#6B6B6B" Margin="0,3,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <DockPanel Margin="0,0,0,12">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" IsVisible="{Binding HasInstalledServices}">
+                            <Button Classes="secondary" Content="Stop All" Padding="14,6" FontSize="12" Margin="0,0,8,0"
+                                    Command="{Binding StopAllCommand}"/>
+                            <Button Classes="primary" Content="Start All" Padding="14,6" FontSize="12"
+                                    Command="{Binding StartAllCommand}"/>
+                        </StackPanel>
+                        <Panel VerticalAlignment="Center">
+                            <TextBlock Text="Installed Services" FontSize="14" FontWeight="SemiBold" IsVisible="{Binding HasInstalledServices}"/>
+                            <TextBlock Text="Available Services" FontSize="14" FontWeight="SemiBold" IsVisible="{Binding !HasInstalledServices}"/>
+                        </Panel>
+                    </DockPanel>
+
+                    <Border Classes="card">
+                        <ItemsControl x:Name="HomeServicesPanel">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Classes="row" Padding="16,12">
+                                        <Grid ColumnDefinitions="14,*,Auto,14,Auto">
+                                            <Ellipse Grid.Column="0" Width="8" Height="8" VerticalAlignment="Center"
+                                                     Fill="{Binding State, Converter={StaticResource StateToDot}}"/>
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="10,0,0,0">
+                                                <TextBlock FontSize="13.5" FontWeight="SemiBold" Text="{Binding Definition.DisplayName}"/>
+                                                <TextBlock FontSize="11" Foreground="#9B9B9B" Margin="0,2,0,0">
+                                                    <Run Text="{Binding Definition.Category}"/><Run Text=" · port "/><Run Text="{Binding Definition.Port}"/>
+                                                </TextBlock>
+                                            </StackPanel>
+                                            <Border Grid.Column="2" CornerRadius="10" Padding="10,4" VerticalAlignment="Center"
+                                                    Background="{Binding State, Converter={StaticResource StateToBadgeBg}}">
+                                                <TextBlock FontSize="11" FontWeight="SemiBold" Text="{Binding StatusText}"
+                                                           Foreground="{Binding State, Converter={StaticResource StateToBadgeFg}}"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Button Classes="primary" Content="Start" Padding="14,5" FontSize="12"
+                                                        Command="{Binding StartCommand}"
+                                                        IsVisible="{Binding State, Converter={StaticResource StateIs}, ConverterParameter=Stopped}"/>
+                                                <Button Classes="danger" Content="Stop" Padding="14,5" FontSize="12"
+                                                        Command="{Binding StopCommand}"
+                                                        IsVisible="{Binding State, Converter={StaticResource StateIs}, ConverterParameter='Running,Starting'}"/>
+                                                <Button Classes="secondary" Content="Install" Padding="14,5" FontSize="12"
+                                                        Command="{Binding InstallCommand}"
+                                                        IsVisible="{Binding State, Converter={StaticResource StateIs}, ConverterParameter=NotInstalled}"/>
+                                                <!-- Uninstall lives behind ⋯ (2026-05-06 misclick incident). -->
+                                                <Button Classes="secondary" Content="⋯" Padding="8,5" FontSize="14" Margin="24,0,0,0"
+                                                        ToolTip.Tip="More actions" Click="OverflowButton_Click"
+                                                        IsVisible="{Binding State, Converter={StaticResource StateIs}, ConverterParameter=Stopped}">
+                                                    <Button.ContextMenu>
+                                                        <ContextMenu>
+                                                            <MenuItem Header="Uninstall…" Command="{Binding UninstallCommand}"/>
+                                                        </ContextMenu>
+                                                    </Button.ContextMenu>
+                                                </Button>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Border>
+
+                    <Panel Margin="0,28,0,12">
+                        <TextBlock Text="Installed Models" FontSize="14" FontWeight="SemiBold" IsVisible="{Binding HasModels}"/>
+                        <TextBlock Text="Available Models" FontSize="14" FontWeight="SemiBold" IsVisible="{Binding !HasModels}"/>
+                    </Panel>
+                    <Border Classes="card">
+                        <Panel>
+                        <TextBlock Text="No models downloaded yet." FontSize="12" Foreground="#9B9B9B" Margin="16,14"
+                                   IsVisible="{Binding !HasModels}"/>
+                        <ItemsControl x:Name="HomeModelsPanel">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Classes="row" Padding="16,11">
+                                        <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                            <Border Classes="pill" VerticalAlignment="Center" Margin="0,0,12,0">
+                                                <TextBlock Text="{Binding ServiceName}" Foreground="#6B6B6B" FontSize="11" FontWeight="Medium"/>
+                                            </Border>
+                                            <TextBlock Grid.Column="1" Text="{Binding FileName}" FontSize="13"
+                                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Grid.Column="2" Text="{Binding DisplaySize}" Foreground="#9B9B9B" FontSize="11"
+                                                       FontFamily="{StaticResource MonoFont}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                            <Button Grid.Column="3" Classes="danger" Content="Delete" Padding="8,3" FontSize="11"
+                                                    Margin="10,0,0,0" VerticalAlignment="Center" Click="OnDeleteModelClick"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        </Panel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ========== SERVICES ========== -->
+            <ScrollViewer Padding="36,28,36,24" HorizontalScrollBarVisibility="Disabled"
+                          IsVisible="{Binding SelectedPage, Converter={StaticResource StringEquals}, ConverterParameter=Services}">
+                <StackPanel>
+                    <TextBlock Text="AI Services" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,24"/>
+                    <ItemsControl ItemsSource="{Binding Services}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Classes="card" Padding="22" Margin="0,0,0,14">
+                                    <StackPanel>
+                                        <DockPanel Margin="0,0,0,8">
+                                            <Border DockPanel.Dock="Right" CornerRadius="6" Padding="8,3" Background="#F7F6F3" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Definition.Port, StringFormat=':{0}'}" Foreground="#9B9B9B" FontSize="12"/>
+                                            </Border>
+                                            <Border DockPanel.Dock="Right" CornerRadius="12" Padding="10,3" Margin="0,0,8,0" VerticalAlignment="Center"
+                                                    Background="{Binding State, Converter={StaticResource StateToBadgeBg}}">
+                                                <TextBlock Text="{Binding StatusText}" FontSize="11" FontWeight="SemiBold"
+                                                           Foreground="{Binding State, Converter={StaticResource StateToBadgeFg}}"/>
+                                            </Border>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Ellipse Width="10" Height="10" VerticalAlignment="Center" Margin="0,0,10,0"
+                                                         Fill="{Binding State, Converter={StaticResource StateToDot}}"/>
+                                                <TextBlock Text="{Binding Definition.DisplayName}" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </DockPanel>
+
+                                        <Border Height="1" Background="#F0F0F0" Margin="0,4,0,16"/>
+
+                                        <!-- Models (while running) -->
+                                        <ItemsControl ItemsSource="{Binding Models}" MaxHeight="130" Margin="0,0,0,14"
+                                                      IsVisible="{Binding State, Converter={StaticResource StateIs}, ConverterParameter=Running}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <DockPanel Margin="0,1">
+                                                        <Button DockPanel.Dock="Right" Classes="danger" Content="×" Width="24" Height="24"
+                                                                Padding="0" FontSize="14" Margin="8,0,0,0" Click="OnDeleteServiceModelClick"/>
+                                                        <TextBlock VerticalAlignment="Center" FontSize="12">
+                                                            <Run Text="{Binding FileName}"/><Run Text=" (" Foreground="#9B9B9B"/><Run Text="{Binding DisplaySize}" Foreground="#9B9B9B"/><Run Text=")" Foreground="#9B9B9B"/>
+                                                        </TextBlock>
+                                                    </DockPanel>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+
+                                        <DockPanel Margin="0,0,0,10">
+                                            <Button DockPanel.Dock="Right" Classes="primary" Content="Download" Padding="14,7"
+                                                    Margin="8,0,0,0" FontSize="12" Command="{Binding DownloadModelCommand}"/>
+                                            <TextBox Text="{Binding NewModelUrl}" Watermark="Paste model URL here"/>
+                                        </DockPanel>
+
+                                        <StackPanel Margin="0,0,0,12" IsVisible="{Binding ActiveDownload, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                            <DockPanel Margin="0,0,0,4">
+                                                <TextBlock DockPanel.Dock="Right" FontSize="11" Foreground="#9B9B9B"
+                                                           Text="{Binding ActiveDownload.ProgressPercent, StringFormat='{}{0:F0}%', FallbackValue='0%'}"/>
+                                                <TextBlock Text="{Binding ActiveDownload.TargetPath, FallbackValue=''}" FontSize="11"
+                                                           Foreground="#9B9B9B" TextTrimming="CharacterEllipsis"/>
+                                            </DockPanel>
+                                            <ProgressBar Minimum="0" Maximum="100" Value="{Binding ActiveDownload.ProgressPercent, FallbackValue=0}"/>
+                                        </StackPanel>
+
+                                        <StackPanel Margin="0,0,0,12" IsVisible="{Binding State, Converter={StaticResource StateIs}, ConverterParameter=Installing}">
+                                            <ProgressBar Minimum="0" Maximum="100" Value="{Binding InstallProgress}"/>
+                                        </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                            <Button Classes="primary" Content="Install" Margin="0,0,8,0" Padding="14,7"
+                                                    Command="{Binding InstallCommand}"
+                                                    IsVisible="{Binding State, Converter={StaticResource StateIs}, ConverterParameter=NotInstalled}"/>
+                                            <Button Classes="primary" Content="Start" Margin="0,0,8,0" Padding="14,7"
+                                                    Command="{Binding StartCommand}"
+                                                    IsVisible="{Binding State, Converter={StaticResource StateIs}, ConverterParameter=Stopped}"/>
+                                            <Button Classes="danger" Content="Stop" Margin="0,0,8,0" Padding="14,7"
+                                                    Command="{Binding StopCommand}"
+                                                    IsVisible="{Binding State, Converter={StaticResource StateIs}, ConverterParameter='Running,Starting'}"/>
+                                            <Button Classes="secondary" Content="⋯" Padding="10,7" Margin="16,0,0,0" FontSize="14"
+                                                    ToolTip.Tip="More actions" Click="OverflowButton_Click"
+                                                    IsVisible="{Binding State, Converter={StaticResource StateIs}, ConverterParameter=Stopped}">
+                                                <Button.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="Uninstall…" Command="{Binding UninstallCommand}"/>
+                                                    </ContextMenu>
+                                                </Button.ContextMenu>
+                                            </Button>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ========== MODELS ========== -->
+            <DockPanel IsVisible="{Binding SelectedPage, Converter={StaticResource StringEquals}, ConverterParameter=Models}">
+                <TextBlock DockPanel.Dock="Top" Text="Installed Models" FontSize="16" FontWeight="SemiBold" Margin="36,28,36,16"/>
+                <Border DockPanel.Dock="Top" Margin="36,0,36,4" Padding="16,8" BorderBrush="#EBEBEB" BorderThickness="0,0,0,1">
+                    <Grid ColumnDefinitions="140,*,90,60">
+                        <TextBlock Grid.Column="0" Text="SERVICE" Classes="caption"/>
+                        <TextBlock Grid.Column="1" Text="MODEL" Classes="caption" Margin="8,0,0,0"/>
+                        <TextBlock Grid.Column="2" Text="SIZE" Classes="caption" HorizontalAlignment="Right" Margin="0,0,12,0"/>
+                    </Grid>
+                </Border>
+                <ScrollViewer Margin="36,0,36,24">
+                    <ItemsControl x:Name="AllModelsPanel">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Classes="row" Padding="16,12">
+                                    <Grid ColumnDefinitions="140,*,90,60">
+                                        <Border Classes="pill" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding ServiceName}" Foreground="#6B6B6B" FontSize="11" FontWeight="Medium"/>
+                                        </Border>
+                                        <TextBlock Grid.Column="1" Text="{Binding FileName}" FontSize="13" FontWeight="SemiBold"
+                                                   VerticalAlignment="Center" Margin="8,0,0,0" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Grid.Column="2" Text="{Binding DisplaySize}" Foreground="#9B9B9B" FontSize="12"
+                                                   FontFamily="{StaticResource MonoFont}" VerticalAlignment="Center"
+                                                   HorizontalAlignment="Right" Margin="0,0,12,0"/>
+                                        <Button Grid.Column="3" Classes="danger" Content="Delete" Padding="8,3" FontSize="11"
+                                                VerticalAlignment="Center" Click="OnDeleteModelClick"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
+
+            <!-- ========== LOGS ========== -->
+            <DockPanel IsVisible="{Binding SelectedPage, Converter={StaticResource StringEquals}, ConverterParameter=Logs}">
+                <Border DockPanel.Dock="Top" Background="White" BorderBrush="#EBEBEB" BorderThickness="0,0,0,1">
+                    <DockPanel Margin="36,14,36,14">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Classes="secondary" Content="Clear" Padding="12,6" FontSize="12" Margin="0,0,8,0" Click="OnClearLogsClick"/>
+                            <Button Classes="secondary" Content="Copy" Padding="12,6" FontSize="12" Click="OnCopyLogsClick"/>
+                        </StackPanel>
+                        <TextBlock Text="System Logs" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </DockPanel>
+                </Border>
+                <Border Classes="card" Margin="36,16,36,24">
+                    <ScrollViewer x:Name="LogScroll" Padding="20,16" HorizontalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding LogLines}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <SelectableTextBlock Text="{Binding}" FontFamily="{StaticResource MonoFont}" FontSize="12"
+                                                         Foreground="#4A4A4A" Margin="0,1"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Border>
+            </DockPanel>
+        </Grid>
+    </Grid>
+</Window>

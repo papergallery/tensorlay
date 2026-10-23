@@ -59,6 +59,7 @@ public static partial class ServiceRegistry
             },
             EnvironmentVariables = MpsEnv(
                 ("TORCH_COMMAND", "pip install torch==2.3.1 torchvision==0.18.1")),
+            PostInstallCommands = ForgeLaunchPackages(),
             StartExecutable = "python3",
             StartArguments = "-3.10 launch.py --api --port 7860 --no-download-sd-model " +
                              "--skip-torch-cuda-test --upcast-sampling --no-half-vae --use-cpu interrogate",
@@ -115,10 +116,11 @@ public static partial class ServiceRegistry
         },
         new ServiceDefinition
         {
-            // TripoSR: the Windows PostInstall CUDA rebuild of torchmcubes is
-            // dropped — requirements.txt already builds it from git (CPU
-            // marching cubes; clang comes with the Command Line Tools), and
-            // gradio_app.py runs on CPU when CUDA is absent.
+            // TripoSR: torchmcubes is built from source without build
+            // isolation against the venv's torch (shared with Windows, see
+            // TorchMcubesSource) — CPU marching cubes, clang from the Command
+            // Line Tools, cmake/ninja from PyPI. gradio_app.py runs on CPU
+            // when CUDA is absent.
             Id = "triposr",
             DisplayName = "TripoSR",
             Port = 7862,
@@ -131,7 +133,13 @@ public static partial class ServiceRegistry
             PythonInterpreterArgs = "-3.10",
             PreInstallCommands = new List<string>
             {
-                "-3.10 -m pip install torch==2.3.1 torchvision==0.18.1"
+                "-3.10 -m pip install torch==2.3.1 torchvision==0.18.1",
+                "-3.10 -m pip install scikit-build-core pybind11 cmake ninja"
+            },
+            RequirementsReplacements = TripoSrRequirementsReplacements(),
+            PostInstallCommands = new List<string>
+            {
+                "-m pip install --no-build-isolation " + TorchMcubesSource
             },
             EnvironmentVariables = MpsEnv(
                 ("GRADIO_SERVER_PORT", "7862"),
@@ -198,6 +206,7 @@ public static partial class ServiceRegistry
             PreInstallCommands = new List<string>
             {
                 "-3.10 -m pip install torch==2.1.0 torchaudio==2.1.0 torchvision==0.16.0",
+                MusicGenFastApiPin,
                 "-3.10 -c \"f='requirements.txt';s=open(f,encoding='utf-8').read();s=s.replace('av==11.0.0','av>=12,<14').replace('transformers>=4.31.0','transformers>=4.31.0,<4.41').replace('gradio','gradio>=4.0,<4.37').replace('xformers<0.0.23','').replace('spacy==3.7.6','spacy==3.7.5');open(f,'w',encoding='utf-8').write(s)\""
             },
             PostInstallCommands = new List<string>
