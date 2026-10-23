@@ -22,10 +22,16 @@ on:
         description: 'JSON list of service ids to test'
         default: '["comfyui","ollama","whisper","f5-tts","alltalk","musicgen","triposr","sd-forge"]'
 
+concurrency:
+  group: mac-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   services:
     runs-on: macos-15
     timeout-minutes: 150
+    env:
+      SERVICE: ${{ matrix.service }}
     strategy:
       fail-fast: false
       matrix:
@@ -49,13 +55,13 @@ jobs:
       - name: Install ${{ matrix.service }}
         run: |
           set -o pipefail
-          dotnet app/TensorLay.Cli/bin/Release/net8.0/tensorlay-cli.dll install ${{ matrix.service }} \
+          dotnet app/TensorLay.Cli/bin/Release/net8.0/tensorlay-cli.dll install "$SERVICE" \
             --dir "$HOME/ai-hub" 2>&1 | tee install.log
 
       - name: Start ${{ matrix.service }}
         run: |
           set -o pipefail
-          dotnet app/TensorLay.Cli/bin/Release/net8.0/tensorlay-cli.dll start ${{ matrix.service }} \
+          dotnet app/TensorLay.Cli/bin/Release/net8.0/tensorlay-cli.dll start "$SERVICE" \
             --dir "$HOME/ai-hub" --health-timeout 1800 2>&1 | tee start.log
 
       - name: Disk after
