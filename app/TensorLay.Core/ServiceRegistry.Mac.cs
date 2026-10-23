@@ -150,7 +150,7 @@ public static partial class ServiceRegistry
                 ("GRADIO_SERVER_PORT", "7862"),
                 ("GRADIO_SERVER_NAME", "127.0.0.1")),
             StartExecutable = "python3",
-            StartArguments = "-3.10 gradio_app.py",
+            StartArguments = "-3.10 gradio_app.py --port 7862",
             ModelsSubfolder = "",
             UseSystemInstaller = false,
             UsesVenv = true

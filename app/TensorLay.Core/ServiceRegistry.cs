@@ -133,10 +133,12 @@ public static partial class ServiceRegistry
             // script (the trap that bit us in 0.9.2 — we wired StartArguments
             // to run.py and got a one-shot inference, not a server).
             //
-            // Port routing: gradio.launch() in gradio_app.py takes no
-            // explicit port arg; gradio honors GRADIO_SERVER_PORT env when
-            // server_port is unset. Hence the EnvironmentVariables entry
-            // below — without it the demo binds 7860 (Forge port collision).
+            // Port routing: gradio_app.py passes its own --port (default
+            // 7860, Forge's port) straight to launch(server_port=...), which
+            // overrides GRADIO_SERVER_PORT — so the port goes on the command
+            // line. Until 2026-10-23 only the env var was set and TripoSR
+            // silently bound 7860 (found by the macOS CI health check). The
+            // env vars stay for gradio's other defaults (server name).
             //
             // CUDA requirement: torchmcubes (marching cubes for the mesh
             // export step) ships a CPU-only wheel on PyPI. The from-source
@@ -189,7 +191,7 @@ public static partial class ServiceRegistry
                 { "GRADIO_SERVER_NAME", "127.0.0.1" },
             },
             StartExecutable = "py",
-            StartArguments = "-3.10 gradio_app.py",
+            StartArguments = "-3.10 gradio_app.py --port 7862",
             ModelsSubfolder = "",   // TripoSR doesn't keep persistent models on disk
             UseSystemInstaller = false,
             UsesVenv = true
