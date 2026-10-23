@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TensorLay.Platform;
 
 namespace TensorLay.Services;
 
@@ -12,10 +13,7 @@ public class AccountService
 {
     private const string ApiBase = "https://tensorlay.com";
 
-    private static readonly string AuthPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "TensorLay",
-        "auth.json");
+    private static readonly string AuthPath = Path.Combine(AppPaths.DataDir, "auth.json");
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -37,7 +35,12 @@ public class AccountService
             bool wasLegacyPlaintext = false;
             string json;
 
-            try
+            if (!OperatingSystem.IsWindows())
+            {
+                // macOS: plain JSON in a 0600 file (see Save).
+                json = Encoding.UTF8.GetString(fileBytes);
+            }
+            else try
             {
                 // Current format: DPAPI-encrypted JSON. Tied to the user
                 // account on this machine — copying auth.json to another
@@ -109,11 +112,16 @@ public class AccountService
 
     private static void Save(AccountSession session)
     {
-        string dir = Path.GetDirectoryName(AuthPath)!;
-        if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+        AppPaths.EnsureDataDir();
 
         string json = JsonSerializer.Serialize(session, JsonOpts);
         byte[] plaintext = Encoding.UTF8.GetBytes(json);
+        if (!OperatingSystem.IsWindows())
+        {
+            File.WriteAllBytes(AuthPath, plaintext);
+            AppPaths.RestrictToOwner(AuthPath);
+            return;
+        }
         byte[] encrypted = ProtectedData.Protect(
             plaintext, null, DataProtectionScope.CurrentUser);
         File.WriteAllBytes(AuthPath, encrypted);

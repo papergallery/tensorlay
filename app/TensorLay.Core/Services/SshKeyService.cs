@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using TensorLay.Platform;
 
 namespace TensorLay.Services;
 
@@ -21,9 +22,7 @@ public class SshKeyService
 
     public SshKeyService()
     {
-        _keyDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "TensorLay");
+        _keyDir = AppPaths.DataDir;
         _ed25519PrivatePath = Path.Combine(_keyDir, "id_ed25519");
         _ed25519PublicPath = Path.Combine(_keyDir, "id_ed25519.pub");
         _rsaPrivatePath = Path.Combine(_keyDir, "id_rsa");
@@ -43,7 +42,7 @@ public class SshKeyService
         if (File.Exists(_rsaPrivatePath) && File.Exists(_rsaPublicPath))
             return _rsaPrivatePath;
 
-        Directory.CreateDirectory(_keyDir);
+        AppPaths.EnsureDataDir();
 
         // ssh-keygen ships with Windows 10 1803+ and is the right tool for
         // ed25519 (BCL has no equivalent that produces an OpenSSH-format key).
@@ -104,6 +103,7 @@ public class SshKeyService
             + Convert.ToBase64String(privateKey, Base64FormattingOptions.InsertLineBreaks)
             + "\n-----END RSA PRIVATE KEY-----\n";
         File.WriteAllText(_rsaPrivatePath, privatePem);
+        AppPaths.RestrictToOwner(_rsaPrivatePath);
 
         // Write public key in OpenSSH RFC 4253 SSH wire format
         // (length-prefixed "ssh-rsa", exponent, modulus — all big-endian).

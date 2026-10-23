@@ -3,6 +3,7 @@ using System.IO.Pipes;
 using System.Linq;
 using System.Windows;
 using System.Windows.Threading;
+using TensorLay.Platform;
 using TensorLay.Services;
 using TensorLay.ViewModels;
 using TensorLay.Views;
@@ -24,10 +25,7 @@ public partial class App : Application
     // thread async-void handlers — most common), TaskScheduler (unobserved
     // Task exceptions that GC eventually surfaces).
     private static readonly object _crashLogLock = new();
-    private static string CrashLogPath =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "TensorLay", "crash.log");
+    private static string CrashLogPath => AppPaths.CrashLogPath;
 
     private ProcessManager? _processManager;
     private HealthCheckService? _healthCheckService;
@@ -152,6 +150,10 @@ public partial class App : Application
         base.OnStartup(e);
 
         var settingsService = new SettingsService();
+        var pairingService = new PairingService();
+        var sshKeyService = new SshKeyService();
+        // Shared view models reach WPF windows/dialogs through this host.
+        UiHost.Current = new WpfUiHost(settingsService, pairingService, sshKeyService);
         _accountService = new AccountService();
         _accountService.LoadCached();
         _gpuMonitor = new GpuMonitor();
@@ -171,9 +173,6 @@ public partial class App : Application
         _remoteCleanupService = new RemoteCleanupService(settingsService, _modelDownloader);
         _remoteCleanupService.StartPolling();
         var modelDeletionService = new ModelDeletionService(_modelDownloader, settingsService);
-
-        var pairingService = new PairingService();
-        var sshKeyService = new SshKeyService();
 
         var mainVm = new MainViewModel(
             _processManager,

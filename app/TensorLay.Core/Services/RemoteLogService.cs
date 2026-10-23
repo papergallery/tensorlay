@@ -204,15 +204,14 @@ public class RemoteLogService : IDisposable
         var hdr = new StringBuilder();
         hdr.AppendLine("=== TensorLay diagnostic bundle ===");
         hdr.AppendLine($"Generated: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
-        hdr.AppendLine($"App version: {System.Reflection.Assembly.GetExecutingAssembly().GetName().Version}");
+        hdr.AppendLine($"App version: {System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version}");
         hdr.AppendLine($"OS: {Environment.OSVersion}");
         hdr.AppendLine($".NET: {Environment.Version}");
         hdr.AppendLine($"Machine: {Environment.MachineName}");
         hdr.AppendLine($"Max age days requested: {maxAgeDays}");
         hdr.AppendLine();
 
-        string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        string logsDir = Path.Combine(appData, "TensorLay", "logs");
+        string logsDir = Platform.AppPaths.LogsDir;
         var sections = new List<string>();
 
         if (Directory.Exists(logsDir))
@@ -238,7 +237,7 @@ public class RemoteLogService : IDisposable
 
         // crash.log is the canonical app-level fault log. Always include if
         // present — it's the highest-signal piece for diagnosing failures.
-        string crashLog = Path.Combine(appData, "TensorLay", "crash.log");
+        string crashLog = Platform.AppPaths.CrashLogPath;
         if (File.Exists(crashLog))
         {
             try

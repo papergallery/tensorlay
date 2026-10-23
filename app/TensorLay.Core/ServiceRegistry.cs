@@ -2,9 +2,17 @@ using TensorLay.Models;
 
 namespace TensorLay;
 
-public static class ServiceRegistry
+public static partial class ServiceRegistry
 {
-    public static List<ServiceDefinition> GetAll() => new()
+    // The service catalogue for the OS we run on. Windows entries target
+    // NVIDIA/CUDA through py.exe-pinned Pythons; macOS entries (see
+    // ServiceRegistry.Mac.cs) target Apple Silicon/MPS through uv-managed
+    // venvs. Ids and ports are identical on both so the relay, the agents'
+    // tooling and remote tasks address services the same way everywhere.
+    public static List<ServiceDefinition> GetAll() =>
+        OperatingSystem.IsMacOS() ? MacServices() : WindowsServices();
+
+    private static List<ServiceDefinition> WindowsServices() => new()
     {
         new ServiceDefinition
         {
@@ -237,27 +245,7 @@ public static class ServiceRegistry
             PythonExecutable = "py",
             PythonInterpreterArgs = "-3.11",
             RequirementsFileName = "system/requirements/requirements_standalone.txt",
-            RequirementsReplacements = new Dictionary<string, string>
-            {
-                // swaps (no Windows wheel -> maintained drop-in)
-                { "tts",            "coqui-tts==0.25.3" },
-                { "av",             "av>=12.0.0,<13" },
-                { "faster-whisper", "faster-whisper==1.2.1" },
-                // cascade bumps coqui-tts 0.25.3 / transformers 4.46 require
-                { "transformers",   "transformers==4.46.2" },
-                { "num2words",      "num2words==0.5.14" },
-                { "gruut",          "gruut>=2.4.0" },
-                { "tensorboard",    "tensorboard>=2.17.0" },
-                // stale pins dropped -> resolver picks coherent transitive versions
-                { "tokenizers",     "" },
-                { "huggingface-hub","" },
-                { "gruut-ipa",      "" },
-                { "gruut-lang-de",  "" },
-                { "gruut-lang-en",  "" },
-                { "gruut-lang-es",  "" },
-                { "gruut-lang-fr",  "" },
-                { "trainer",        "" },
-            },
+            RequirementsReplacements = AllTalkRequirementsReplacements(),
             // script.py spawns the TTS engine + model downloader via a bare
             // `python` subprocess (subprocess.run/Popen(["python", ...])).
             // ProcessManager launches script.py with the venv python, but the
@@ -266,23 +254,7 @@ public static class ServiceRegistry
             // ModuleNotFoundError and AllTalk loops "TTS Subprocess has NOT
             // started up" → timeout. Pin both call sites to the venv python
             // that runs script.py (sys.executable, already imported there).
-            SourceReplacements = new Dictionary<string, Dictionary<string, string>>
-            {
-                ["script.py"] = new Dictionary<string, string>
-                {
-                    { "[\"python\",", "[sys.executable," },
-                },
-                // modeldownload.py greps requirements_standalone.txt for a
-                // `TTS==` line to read the model version. RequirementsReplacements
-                // renamed that to coqui-tts==, so the grep found nothing and
-                // raised "Could not find TTS version specifier" — aborting the
-                // XTTS model download, which then left tts_server.py with no
-                // models/xttsv2_2.0.2/config.json (FileNotFoundError at start).
-                ["modeldownload.py"] = new Dictionary<string, string>
-                {
-                    { "\"TTS==\"", "\"coqui-tts==\"" },
-                },
-            },
+            SourceReplacements = AllTalkSourceReplacements(),
             PreInstallCommands = new List<string>
             {
                 // Same +cu121 pinning idiom as Forge. AllTalk's
@@ -530,5 +502,49 @@ public static class ServiceRegistry
             UseSystemInstaller = false,
             UsesVenv = true
         }
+    };
+
+    // AllTalk's requirement swaps and start-time source patches are the same
+    // on Windows and macOS (coqui-tts / av>=12 have wheels for both, and the
+    // bare-`python` subprocess + TTS== grep bugs are platform-neutral). One
+    // definition, referenced by both catalogues, so a fix lands everywhere.
+    private static Dictionary<string, string> AllTalkRequirementsReplacements() => new Dictionary<string, string>
+    {
+        // swaps (no Windows wheel -> maintained drop-in)
+        { "tts",            "coqui-tts==0.25.3" },
+        { "av",             "av>=12.0.0,<13" },
+        { "faster-whisper", "faster-whisper==1.2.1" },
+        // cascade bumps coqui-tts 0.25.3 / transformers 4.46 require
+        { "transformers",   "transformers==4.46.2" },
+        { "num2words",      "num2words==0.5.14" },
+        { "gruut",          "gruut>=2.4.0" },
+        { "tensorboard",    "tensorboard>=2.17.0" },
+        // stale pins dropped -> resolver picks coherent transitive versions
+        { "tokenizers",     "" },
+        { "huggingface-hub","" },
+        { "gruut-ipa",      "" },
+        { "gruut-lang-de",  "" },
+        { "gruut-lang-en",  "" },
+        { "gruut-lang-es",  "" },
+        { "gruut-lang-fr",  "" },
+        { "trainer",        "" },
+    };
+
+    private static Dictionary<string, Dictionary<string, string>> AllTalkSourceReplacements() => new Dictionary<string, Dictionary<string, string>>
+    {
+        ["script.py"] = new Dictionary<string, string>
+        {
+            { "[\"python\",", "[sys.executable," },
+        },
+        // modeldownload.py greps requirements_standalone.txt for a
+        // `TTS==` line to read the model version. RequirementsReplacements
+        // renamed that to coqui-tts==, so the grep found nothing and
+        // raised "Could not find TTS version specifier" — aborting the
+        // XTTS model download, which then left tts_server.py with no
+        // models/xttsv2_2.0.2/config.json (FileNotFoundError at start).
+        ["modeldownload.py"] = new Dictionary<string, string>
+        {
+            { "\"TTS==\"", "\"coqui-tts==\"" },
+        },
     };
 }

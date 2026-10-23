@@ -293,7 +293,7 @@ public class RemoteCleanupService : IDisposable
         var inventory = new ModelInventory
         {
             GeneratedAt = DateTime.UtcNow,
-            AppVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "",
+            AppVersion = Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "",
             InstallDirectory = installDir,
             Disk = ReadDisk(installDir),
         };

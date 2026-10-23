@@ -19,12 +19,11 @@
     <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>
 
+  <!-- Models, services, registry and view models live in TensorLay.Core,
+       shared with the macOS front end (TensorLay.Mac). Its packages
+       (CommunityToolkit.Mvvm, SSH.NET, ProtectedData) flow in from there. -->
   <ItemGroup>
-    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
-    <PackageReference Include="SSH.NET" Version="2024.2.0" />
-    <!-- ProtectedData (DPAPI wrapper) for AccountService — not in the BCL
-         on net8.0-windows, has to come from this package. -->
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
+    <ProjectReference Include="..\TensorLay.Core\TensorLay.Core.csproj" />
   </ItemGroup>
 
   <!-- UseWindowsForms above pulls System.Windows.Forms AND System.Drawing

@@ -21,9 +21,8 @@ internal static class DownloadLog
     {
         get
         {
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             string day = DateTime.Now.ToString("yyyy-MM-dd");
-            return Path.Combine(appData, "TensorLay", "logs", $"downloads-{day}.log");
+            return Path.Combine(Platform.AppPaths.LogsDir, $"downloads-{day}.log");
         }
     }
 

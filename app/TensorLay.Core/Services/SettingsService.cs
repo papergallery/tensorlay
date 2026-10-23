@@ -3,22 +3,22 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TensorLay.Models;
+using TensorLay.Platform;
 
 namespace TensorLay.Services;
 
 public class SettingsService
 {
-    private static readonly string SettingsPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "TensorLay",
-        "settings.json");
+    private static readonly string SettingsPath = Path.Combine(AppPaths.DataDir, "settings.json");
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     // Marker for fields encrypted with DPAPI (CurrentUser scope). Anything
     // that starts with this prefix on disk is treated as ciphertext; anything
     // else is plaintext (legacy data from before encryption was added) and
-    // silently re-encrypted on next Save.
+    // silently re-encrypted on next Save. Windows only — on macOS the tokens
+    // are stored as-is in a 0600 settings.json inside the 0700 data dir, the
+    // same protection the SSH private key next to it already relies on.
     private const string DpapiPrefix = "DPAPI:";
 
     // Cache the raw JSON, not the parsed object — every Load() deserializes
@@ -78,9 +78,7 @@ public class SettingsService
         settings.RemoteTasksToken = EncryptField(settings.RemoteTasksToken);
         settings.RemoteCommandBridgeToken = EncryptField(settings.RemoteCommandBridgeToken);
 
-        string dir = Path.GetDirectoryName(SettingsPath)!;
-        if (!Directory.Exists(dir))
-            Directory.CreateDirectory(dir);
+        AppPaths.EnsureDataDir();
 
         string json = JsonSerializer.Serialize(settings, JsonOptions);
         // Atomic replace: write to a sibling file then rename. Without this,
@@ -89,6 +87,7 @@ public class SettingsService
         // SSH key path, and pairing state.
         string tmpPath = SettingsPath + ".tmp";
         File.WriteAllText(tmpPath, json);
+        AppPaths.RestrictToOwner(tmpPath);
         File.Move(tmpPath, SettingsPath, overwrite: true);
 
         lock (_lock)
@@ -105,6 +104,7 @@ public class SettingsService
     {
         if (string.IsNullOrEmpty(plaintext)) return "";
         if (plaintext.StartsWith(DpapiPrefix, StringComparison.Ordinal)) return plaintext;
+        if (!OperatingSystem.IsWindows()) return plaintext;
         try
         {
             byte[] bytes = Encoding.UTF8.GetBytes(plaintext);
@@ -130,6 +130,7 @@ public class SettingsService
             // AccountService.
             return raw;
         }
+        if (!OperatingSystem.IsWindows()) return ""; // DPAPI blob from a Windows box — unreadable here
         try
         {
             byte[] cipher = Convert.FromBase64String(raw.Substring(DpapiPrefix.Length));

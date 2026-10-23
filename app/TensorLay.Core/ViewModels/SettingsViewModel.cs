@@ -2,10 +2,9 @@ using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using TensorLay.Models;
+using TensorLay.Platform;
 using TensorLay.Services;
-using Microsoft.Win32;
 using Renci.SshNet;
-using WinForms = System.Windows.Forms;
 
 namespace TensorLay.ViewModels;
 
@@ -143,7 +142,7 @@ public partial class SettingsViewModel : ViewModelBase
     {
         if (!string.IsNullOrEmpty(RemoteCommandBridgeToken))
         {
-            try { System.Windows.Clipboard.SetText(RemoteCommandBridgeToken); }
+            try { Ui.SetClipboard(RemoteCommandBridgeToken); }
             catch { /* clipboard busy — user can select the text manually */ }
         }
     }
@@ -157,33 +156,19 @@ public partial class SettingsViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void BrowseSshKey()
+    private async Task BrowseSshKey()
     {
-        var dialog = new OpenFileDialog
-        {
-            Title = "Select SSH private key",
-            Filter = "All files (*.*)|*.*|PEM files (*.pem)|*.pem|PPK files (*.ppk)|*.ppk",
-            CheckFileExists = true
-        };
-
-        if (dialog.ShowDialog() == true)
-            SshKeyPath = dialog.FileName;
+        string? path = await Ui.PickFileAsync("Select SSH private key");
+        if (path is not null)
+            SshKeyPath = path;
     }
 
     [RelayCommand]
-    private void BrowseInstallDir()
+    private async Task BrowseInstallDir()
     {
-        // WPF does not have a built-in folder browser dialog in .NET 8
-        // Using OpenFileDialog in directory mode via Win32 FolderBrowserDialog
-        using var dialog = new WinForms.FolderBrowserDialog
-        {
-            Description = "Select installation directory",
-            SelectedPath = InstallDirectory,
-            UseDescriptionForTitle = true
-        };
-
-        if (dialog.ShowDialog() == WinForms.DialogResult.OK)
-            InstallDirectory = dialog.SelectedPath;
+        string? path = await Ui.PickFolderAsync("Select installation directory", InstallDirectory);
+        if (path is not null)
+            InstallDirectory = path;
     }
 
     [RelayCommand]

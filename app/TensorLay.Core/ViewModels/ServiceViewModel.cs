@@ -1,6 +1,6 @@
 using System.Collections.ObjectModel;
 using System.IO;
-using System.Windows;
+using TensorLay.Platform;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using TensorLay.Models;
@@ -175,12 +175,10 @@ public partial class ServiceViewModel : ViewModelBase
 
         if (failure is not null)
         {
-            RunOnUI(() => MessageBox.Show(
-                System.Windows.Application.Current?.MainWindow,
-                failure.Message,
+            RunOnUI(() => Ui.ShowMessage(
                 $"{Definition.DisplayName} install failed",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error));
+                failure.Message,
+                MessageKind.Error));
         }
     }
 
@@ -203,8 +201,7 @@ public partial class ServiceViewModel : ViewModelBase
         bool offerKeep = !Definition.UseSystemInstaller
             && !string.IsNullOrEmpty(Definition.ModelsScanRoot.Length > 0 ? Definition.ModelsScanRoot : Definition.ModelsSubfolder);
 
-        var (confirmed, keepModels) = await Views.UninstallConfirmWindow.AskAsync(
-            System.Windows.Application.Current?.MainWindow,
+        var (confirmed, keepModels) = await Ui.AskUninstallAsync(
             Definition.DisplayName,
             targetPath,
             offerKeep);
@@ -237,12 +234,10 @@ public partial class ServiceViewModel : ViewModelBase
 
         if (failure is not null)
         {
-            RunOnUI(() => MessageBox.Show(
-                System.Windows.Application.Current?.MainWindow,
-                failure.Message,
+            RunOnUI(() => Ui.ShowMessage(
                 $"{Definition.DisplayName} uninstall failed",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning));
+                failure.Message,
+                MessageKind.Warning));
         }
     }
 

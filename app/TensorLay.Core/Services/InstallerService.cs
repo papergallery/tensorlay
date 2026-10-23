@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using TensorLay.Models;
+using TensorLay.Platform;
 
 namespace TensorLay.Services;
 
@@ -38,7 +39,12 @@ public class InstallerService : IDisposable
         {
             if (service.UseSystemInstaller)
             {
-                await InstallOllama(service.Id);
+                if (OperatingSystem.IsMacOS())
+                    await MacToolchain.InstallOllamaAsync(
+                        msg => InstallLog?.Invoke(service.Id, msg),
+                        f => InstallProgress?.Invoke(service.Id, f));
+                else
+                    await InstallOllama(service.Id);
                 return;
             }
 
@@ -54,7 +60,10 @@ public class InstallerService : IDisposable
                 ? installDir
                 : Path.Combine(installDir, service.RelativeInstallPath);
 
-            EnsureOnPath("git", "Git", "https://git-scm.com/download/win");
+            if (OperatingSystem.IsMacOS())
+                await MacToolchain.EnsureCommandLineToolsAsync();
+            else
+                EnsureOnPath("git", "Git", "https://git-scm.com/download/win");
 
             Directory.CreateDirectory(installDir);
 
@@ -168,7 +177,13 @@ public class InstallerService : IDisposable
                 // PythonInterpreterArgs="-3.10" — must match the runtime
                 // launcher so pip installs into the same Python that runs
                 // the service.
-                EnsureOnPath(service.PythonExecutable, "Python 3", "https://www.python.org/downloads/windows/");
+                // macOS: uv provides the interpreter (see the venv step), so
+                // there is no system Python to look for.
+                string? uv = OperatingSystem.IsMacOS()
+                    ? await MacToolchain.EnsureUvAsync(msg => InstallLog?.Invoke(service.Id, msg))
+                    : null;
+                if (uv is null)
+                    EnsureOnPath(service.PythonExecutable, "Python 3", "https://www.python.org/downloads/windows/");
 
                 // The new Windows Python Launcher (bundled with Python 3.13+)
                 // can fetch missing runtimes on demand via `py install 3.10`.
@@ -200,14 +215,28 @@ public class InstallerService : IDisposable
                 if (service.UsesVenv)
                 {
                     string venvPath = Path.Combine(targetPath, ".venv");
-                    string venvPython = Path.Combine(venvPath, "Scripts", "python.exe");
+                    string venvPython = PlatformEnv.VenvPython(venvPath);
                     if (!File.Exists(venvPython))
                     {
                         InstallLog?.Invoke(service.Id, $"Creating isolated venv at {venvPath}...");
-                        string venvArgs = string.IsNullOrEmpty(pyArgsPrefix)
-                            ? $"-m venv \"{venvPath}\""
-                            : $"{pyArgsPrefix} -m venv \"{venvPath}\"";
-                        await RunProcess(pyExe, venvArgs, targetPath, service.Id);
+                        if (uv is not null)
+                        {
+                            // `uv venv --python 3.X` fetches that CPython build
+                            // itself when the Mac has none; --seed puts pip in
+                            // the venv so the registry's `-m pip ...` commands
+                            // run unchanged.
+                            string version = string.IsNullOrEmpty(pyArgsPrefix)
+                                ? "3.12"
+                                : pyArgsPrefix.Split(' ')[0].TrimStart('-');
+                            await RunProcess(uv, $"venv --python {version} --seed \"{venvPath}\"", targetPath, service.Id);
+                        }
+                        else
+                        {
+                            string venvArgs = string.IsNullOrEmpty(pyArgsPrefix)
+                                ? $"-m venv \"{venvPath}\""
+                                : $"{pyArgsPrefix} -m venv \"{venvPath}\"";
+                            await RunProcess(pyExe, venvArgs, targetPath, service.Id);
+                        }
                     }
                     else
                     {
@@ -459,6 +488,19 @@ public class InstallerService : IDisposable
 
     public async Task Uninstall(ServiceDefinition service, string installDir, bool keepModels)
     {
+        if (service.UseSystemInstaller && OperatingSystem.IsMacOS())
+        {
+            // On macOS Ollama is our own download in ToolsDir — removable.
+            // A user-installed Ollama.app is theirs to remove.
+            if (!Directory.Exists(PlatformEnv.OllamaDir))
+                throw new NotSupportedException(
+                    $"{service.DisplayName} was installed outside TensorLay. Remove Ollama.app from Applications instead.");
+            InstallLog?.Invoke(service.Id, $"Removing {PlatformEnv.OllamaDir}...");
+            await Task.Run(() => SoftDeleteDirectory(service.Id, PlatformEnv.OllamaDir));
+            InstallLog?.Invoke(service.Id, "Uninstalled (downloaded models in ~/.ollama are kept).");
+            return;
+        }
+
         if (service.UseSystemInstaller)
         {
             // Ollama (the only system-installer service today) is installed via
@@ -546,6 +588,11 @@ public class InstallerService : IDisposable
     private void SoftDeleteDirectory(string serviceId, string path)
     {
         if (!Directory.Exists(path)) return;
+        if (!OperatingSystem.IsWindows())
+        {
+            MoveToTrashOrDelete(serviceId, path, isDirectory: true);
+            return;
+        }
         ClearReadOnlyRecursive(path);
         try
         {
@@ -575,6 +622,11 @@ public class InstallerService : IDisposable
     private void SoftDeleteFile(string serviceId, string path)
     {
         if (!File.Exists(path)) return;
+        if (!OperatingSystem.IsWindows())
+        {
+            MoveToTrashOrDelete(serviceId, path, isDirectory: false);
+            return;
+        }
         try
         {
             var attrs = File.GetAttributes(path);
@@ -595,6 +647,39 @@ public class InstallerService : IDisposable
             InstallLog?.Invoke(serviceId,
                 $"WARN: Recycle Bin delete failed for {path} ({ex.Message}); falling back to permanent delete.");
             try { File.Delete(path); } catch { /* swallow */ }
+        }
+    }
+
+    // macOS counterpart of the Recycle Bin path: rename into ~/.Trash (instant
+    // on the same volume, restorable from the Dock's Trash). A cross-volume
+    // install dir can't be renamed there, so it falls back to a permanent
+    // delete with the same WARN line the Windows path logs.
+    private void MoveToTrashOrDelete(string serviceId, string path, bool isDirectory)
+    {
+        try
+        {
+            string trash = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".Trash");
+            string name = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar));
+            string dest = Path.Combine(trash, name);
+            if (Directory.Exists(dest) || File.Exists(dest))
+                dest = Path.Combine(trash, $"{name} {DateTime.Now:HH.mm.ss}");
+            if (isDirectory) Directory.Move(path, dest);
+            else File.Move(path, dest);
+        }
+        catch (Exception ex)
+        {
+            InstallLog?.Invoke(serviceId,
+                $"WARN: could not move {path} to the Trash ({ex.Message}); deleting permanently.");
+            try
+            {
+                if (isDirectory) Directory.Delete(path, recursive: true);
+                else File.Delete(path);
+            }
+            catch (Exception ex2)
+            {
+                InstallLog?.Invoke(serviceId, $"ERROR: permanent delete also failed: {ex2.Message}");
+                if (isDirectory) throw;
+            }
         }
     }
 

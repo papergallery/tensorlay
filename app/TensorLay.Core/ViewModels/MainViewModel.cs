@@ -3,6 +3,7 @@ using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using TensorLay.Models;
+using TensorLay.Platform;
 using TensorLay.Services;
 
 namespace TensorLay.ViewModels;
@@ -28,7 +29,7 @@ public partial class MainViewModel : ViewModelBase
     // approvals. Agent requests queue while a window is open; local Delete
     // clicks share the slot so the two kinds never stack on top of each other.
     private readonly Queue<RemoteDeletionRequest> _pendingDeletions = new();
-    private Views.ModelDeletionWindow? _openDeletionWindow;
+    private IUiWindow? _openDeletionWindow;
     // FIFO queue for tasks that arrive while another approval modal is open.
     // Drained one-at-a-time on each DecisionMade event, so a burst of agent
     // submissions doesn't pile up overlapping windows.
@@ -38,7 +39,9 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty]
     private ObservableCollection<ServiceViewModel> _services = new();
 
-    public string AppVersion => "v" + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0");
+    // Entry assembly = the front-end exe (GpuHub / TensorLay), which carries
+    // the release version; this file lives in TensorLay.Core.
+    public string AppVersion => "v" + (Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0");
 
     [ObservableProperty]
     private bool _isTunnelConnected;
@@ -206,17 +209,13 @@ public partial class MainViewModel : ViewModelBase
         _isApprovalModalOpen = true;
 
         var vm = new RemoteInstallViewModel(_remoteTaskService, _settingsService, task);
-        var window = new Views.RemoteInstallApprovalWindow(vm)
-        {
-            Owner = System.Windows.Application.Current.MainWindow,
-        };
-        window.Closed += (_, _) =>
+        // Non-modal so other UI stays responsive while a download runs.
+        Ui.ShowRemoteInstall(vm, () =>
         {
             _isApprovalModalOpen = false;
             PendingRemoteTaskCount = _pendingRemoteTasks.Count;
             ShowNextRemoteTaskIfIdle();
-        };
-        window.Show();   // non-modal so other UI stays responsive while a download runs
+        });
     }
 
     private void OnDeletionReceived(RemoteDeletionRequest request)
@@ -236,23 +235,20 @@ public partial class MainViewModel : ViewModelBase
 
         var vm = ModelDeletionViewModel.ForRemoteRequest(_modelDeletionService, _remoteCleanupService, request);
         vm.Finished += OnDeletionsApplied;
-        var window = new Views.ModelDeletionWindow(vm)
-        {
-            Owner = System.Windows.Application.Current.MainWindow,
-        };
-        window.Closed += (_, _) =>
+        // Non-modal, like install approvals.
+        _openDeletionWindow = Ui.ShowModelDeletion(vm, () =>
         {
             vm.Finished -= OnDeletionsApplied;
             _openDeletionWindow = null;
             ShowNextDeletionIfIdle();
-        };
-        _openDeletionWindow = window;
-        window.Show();   // non-modal, like install approvals
+        });
     }
 
     // Delete button on the Models page / service card: same window and code
     // path as a remote request, with a single pre-selected item.
-    public void RequestModelDeletion(ModelInfo model)
+    public void RequestModelDeletion(ModelInfo model) => _ = RequestModelDeletionAsync(model);
+
+    private async Task RequestModelDeletionAsync(ModelInfo model)
     {
         // A deletion window is already up (usually an agent request): finish
         // that one first.
@@ -264,14 +260,9 @@ public partial class MainViewModel : ViewModelBase
 
         var vm = ModelDeletionViewModel.ForLocalModel(_modelDeletionService, model);
         vm.Finished += OnDeletionsApplied;
-        var window = new Views.ModelDeletionWindow(vm)
-        {
-            Owner = System.Windows.Application.Current.MainWindow,
-        };
-        _openDeletionWindow = window;
         try
         {
-            window.ShowDialog();
+            await Ui.ShowModelDeletionModalAsync(vm, window => _openDeletionWindow = window);
         }
         finally
         {
@@ -348,9 +339,7 @@ public partial class MainViewModel : ViewModelBase
         // First connection — open pairing window
         if (!settings.IsPaired)
         {
-            var window = new Views.PairingWindow(_pairingService, _sshKeyService, _settingsService);
-            window.Owner = System.Windows.Application.Current.MainWindow;
-            if (window.ShowDialog() != true)
+            if (!await Ui.ShowPairingAsync())
                 return;
 
             IsPaired = true;
@@ -430,8 +419,7 @@ public partial class MainViewModel : ViewModelBase
     // thread because Services is an ObservableCollection bound to the view.
     public IReadOnlyList<BridgeServiceInfo> GetBridgeServices()
     {
-        var d = System.Windows.Application.Current.Dispatcher;
-        return d.Invoke(() => Services.Select(s => new BridgeServiceInfo(
+        return Ui.Invoke(() => (IReadOnlyList<BridgeServiceInfo>)Services.Select(s => new BridgeServiceInfo(
             s.Definition.Id,
             s.Definition.DisplayName,
             s.Definition.Port,
@@ -447,15 +435,14 @@ public partial class MainViewModel : ViewModelBase
 
     private async Task<bool> BridgeServiceControl(string id, bool start)
     {
-        var d = System.Windows.Application.Current.Dispatcher;
-        return await d.InvokeAsync(async () =>
+        return await Ui.InvokeAsync(async () =>
         {
             var vm = Services.FirstOrDefault(s => s.Definition.Id == id);
             if (vm == null) return false;
             if (start) await vm.StartCommand.ExecuteAsync(null);
             else await vm.StopCommand.ExecuteAsync(null);
             return true;
-        }).Task.Unwrap();
+        });
     }
 
     /// <summary>
@@ -538,8 +525,7 @@ public partial class MainViewModel : ViewModelBase
     private async Task OpenSettings()
     {
         bool wasPolling = _remoteTaskService.IsRunning;
-        var window = new Views.SettingsWindow(_settingsService, RepairFromSettings);
-        if (window.ShowDialog() != true) return;
+        if (!await Ui.ShowSettingsAsync(RepairFromSettings)) return;
 
         // Settings was saved (Save button, not Cancel) — reconcile the
         // polling loop with the new flag state. Toggle ON → start; OFF →
@@ -564,16 +550,12 @@ public partial class MainViewModel : ViewModelBase
     /// A live tunnel belongs to the old pairing — drop it first. Returns
     /// true when the pairing dialog completed successfully.
     /// </summary>
-    private async Task<bool> RepairFromSettings(System.Windows.Window owner)
+    private async Task<bool> RepairFromSettings()
     {
         if (IsTunnelConnected)
             await DisconnectTunnel();
 
-        var pairing = new Views.PairingWindow(_pairingService, _sshKeyService, _settingsService)
-        {
-            Owner = owner,
-        };
-        if (pairing.ShowDialog() != true)
+        if (!await Ui.ShowPairingAsync())
             return false;
 
         IsPaired = true;
@@ -584,9 +566,7 @@ public partial class MainViewModel : ViewModelBase
     [RelayCommand]
     private async Task OpenPairing()
     {
-        var window = new Views.PairingWindow(_pairingService, _sshKeyService, _settingsService);
-        window.Owner = System.Windows.Application.Current.MainWindow;
-        if (window.ShowDialog() == true)
+        if (await Ui.ShowPairingAsync())
         {
             IsPaired = true;
             // Auto-connect tunnel after successful pairing

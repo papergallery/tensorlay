@@ -58,64 +58,17 @@ public partial class PairingWindow : Window
         // Keep CancelBtn enabled so the user can abort a hung request.
         CancelBtn.IsEnabled = true;
         PairBtnText.Text = "Connecting...";
-        SetStatus("Checking relay...", false);
 
         try
         {
-            var healthy = await _pairingService.CheckRelayHealthAsync(vpsIp, ct);
-            if (!healthy)
+            if (await PairingFlow.RunAsync(_pairingService, _sshKeyService, _settingsService,
+                    vpsIp, code, SetStatus, ct))
             {
-                SetStatus("Cannot reach relay on port 8090. Is it installed?", true);
-                ResetButtons();
-                return;
-            }
-
-            SetStatus("Generating SSH key...", false);
-            string publicKey;
-            string keyPath;
-            try
-            {
-                // RSA-4096 fallback can take seconds — keep it off the UI thread.
-                keyPath = await _sshKeyService.GetOrCreateKeyPathAsync();
-                publicKey = await _sshKeyService.GetPublicKeyAsync();
-            }
-            catch (Exception ex)
-            {
-                SetStatus($"Key error: {ex.Message}", true);
-                ResetButtons();
-                return;
-            }
-
-            SetStatus("Pairing...", false);
-            var result = await _pairingService.PairAsync(vpsIp, code, publicKey, ct);
-
-            if (result.Success)
-            {
-                var settings = _settingsService.Load();
-                settings.VpsHost = vpsIp;
-                settings.VpsUser = result.SshUser;
-                settings.SshPort = result.SshPort;
-                settings.SshKeyPath = keyPath;
-                settings.IsPaired = true;
-                settings.AutoconnectTunnel = true;
-                // Pin the VPS's SSH host keys so any future Connect that
-                // negotiates a different key (= different server) is rejected.
-                settings.SshHostKeyFingerprints = result.HostKeyFingerprints ?? new List<string>();
-                // v0.9.0 — store the rotated remote-tasks bearer. Empty when
-                // the relay is older than 1.3.0; the polling loop checks for
-                // this and stays idle until the user repairs against a newer
-                // relay. We don't auto-enable AllowRemoteInstallRequests —
-                // user has to flip it in Settings explicitly.
-                settings.RemoteTasksToken = result.RemoteTasksToken ?? "";
-                _settingsService.Save(settings);
-
-                SetStatus("Paired successfully!", false);
                 DialogResult = true;
                 Close();
             }
             else
             {
-                SetStatus(result.Error, true);
                 ResetButtons();
             }
         }

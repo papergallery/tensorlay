@@ -47,7 +47,11 @@ public class GpuMonitor : IDisposable
     // a synchronous fault could escape and leave _polling stuck at 1.
     private async Task PollWithFlagAsync()
     {
-        try { await PollAsync().ConfigureAwait(false); }
+        try
+        {
+            if (OperatingSystem.IsMacOS()) await PollMacAsync().ConfigureAwait(false);
+            else await PollAsync().ConfigureAwait(false);
+        }
         finally { Volatile.Write(ref _polling, 0); }
     }
 
@@ -226,6 +230,106 @@ public class GpuMonitor : IDisposable
             return GpuGeneration.Pre30;
 
         return GpuGeneration.Unknown;
+    }
+
+    // ── macOS (Apple Silicon) ───────────────────────────────────────────────
+    // No nvidia-smi and no separate VRAM: the GPU shares system memory. All
+    // three sources below work without sudo (powermetrics would add power
+    // and temperature but needs root, so those stay 0 and the UI hides them):
+    //   sysctl  machdep.cpu.brand_string -> "Apple M2"     (name, once)
+    //           hw.memsize               -> total RAM
+    //   vm_stat                          -> used RAM (active+wired+compressed)
+    //   ioreg   IOAccelerator PerformanceStatistics
+    //           "Device Utilization %"   -> GPU load
+    //           "In use system memory"   -> memory the GPU currently holds
+    // VramTotalMb reports the share of RAM Metal lets the GPU wire (about 2/3
+    // of RAM up to 36 GB, 3/4 above), which is the real ceiling for models.
+    private string? _macGpuName;
+    private long _macRamBytes;
+
+    private async Task PollMacAsync()
+    {
+        try
+        {
+            _macGpuName ??= (await RunCaptureAsync("/usr/sbin/sysctl", "-n machdep.cpu.brand_string").ConfigureAwait(false))?.Trim();
+            if (_macRamBytes == 0 &&
+                long.TryParse((await RunCaptureAsync("/usr/sbin/sysctl", "-n hw.memsize").ConfigureAwait(false))?.Trim(), out long mem))
+                _macRamBytes = mem;
+
+            var info = new GpuInfo { GpuName = string.IsNullOrEmpty(_macGpuName) ? "Apple GPU" : _macGpuName };
+            if (_macRamBytes > 0)
+            {
+                info.RamTotalMb = (int)(_macRamBytes / 1_048_576);
+                double share = _macRamBytes > 36L * 1024 * 1024 * 1024 ? 0.75 : 2.0 / 3.0;
+                info.VramTotalMb = (int)(info.RamTotalMb * share);
+            }
+
+            string? vm = await RunCaptureAsync("/usr/bin/vm_stat", "").ConfigureAwait(false);
+            if (vm is not null) info.RamUsedMb = ParseVmStatUsedMb(vm);
+
+            string? io = await RunCaptureAsync("/usr/sbin/ioreg", "-r -d 1 -c IOAccelerator").ConfigureAwait(false);
+            if (io is not null)
+            {
+                var util = System.Text.RegularExpressions.Regex.Match(io, "\"Device Utilization %\"=(\\d+)");
+                if (util.Success) info.GpuUtilPercent = float.Parse(util.Groups[1].Value);
+                var inUse = System.Text.RegularExpressions.Regex.Match(io, "\"In use system memory\"=(\\d+)");
+                if (inUse.Success && long.TryParse(inUse.Groups[1].Value, out long bytes))
+                    info.VramUsedMb = (int)(bytes / 1_048_576);
+            }
+
+            CurrentInfo = info;
+            GpuInfoUpdated?.Invoke(info);
+        }
+        catch
+        {
+            // Any probe missing — skip this tick, same as the nvidia-smi path.
+        }
+    }
+
+    // vm_stat prints "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
+    // then "Pages active:   123456." lines. Used = active + wired + compressed,
+    // which is what Activity Monitor calls "Memory Used".
+    internal static int ParseVmStatUsedMb(string vmStat)
+    {
+        long pageSize = 16384;
+        var ps = System.Text.RegularExpressions.Regex.Match(vmStat, @"page size of (\d+) bytes");
+        if (ps.Success) pageSize = long.Parse(ps.Groups[1].Value);
+
+        long Pages(string label)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(vmStat, label + @":\s+(\d+)");
+            return m.Success ? long.Parse(m.Groups[1].Value) : 0;
+        }
+
+        long used = Pages("Pages active") + Pages("Pages wired down") + Pages("Pages occupied by compressor");
+        return (int)(used * pageSize / 1_048_576);
+    }
+
+    private static async Task<string?> RunCaptureAsync(string exe, string args)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = exe,
+            Arguments = args,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        using var process = Process.Start(psi);
+        if (process is null) return null;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        try
+        {
+            var readTask = process.StandardOutput.ReadToEndAsync(cts.Token);
+            await Task.WhenAll(readTask, process.WaitForExitAsync(cts.Token)).ConfigureAwait(false);
+            return await readTask;
+        }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            return null;
+        }
     }
 
     public void Dispose()

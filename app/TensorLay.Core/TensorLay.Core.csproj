@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Platform-neutral half of the desktop app: models, services, the
+       service registry and the view models. Shared by the WPF (Windows)
+       and Avalonia (macOS) front ends so the business logic exists once.
+       UI-specific work (windows, dialogs, clipboard, dispatcher) goes
+       through Platform/IUiHost, implemented by each front end. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TensorLay</RootNamespace>
+    <AssemblyName>TensorLay.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="SSH.NET" Version="2024.2.0" />
+    <!-- DPAPI for token-at-rest encryption on Windows. Every call site is
+         behind OperatingSystem.IsWindows(); other platforms rely on 0600
+         file permissions in the per-user data directory instead. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
+  </ItemGroup>
+
+</Project>

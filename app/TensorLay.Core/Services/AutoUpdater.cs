@@ -10,8 +10,15 @@ namespace TensorLay.Services;
 
 public class AutoUpdater : IDisposable
 {
-    private const string UpdateUrl = "https://tensorlay.com/updates/version.json";
-    private const string ExeUrl = "https://tensorlay.com/updates/GpuHub.exe";
+    // Windows and macOS publish independent manifests: the Mac build ships
+    // as a zipped .app under /updates/mac/ with its own version + sha256, so
+    // a Windows release never offers itself to a Mac and vice versa.
+    private static readonly string UpdateUrl = OperatingSystem.IsMacOS()
+        ? "https://tensorlay.com/updates/mac/version.json"
+        : "https://tensorlay.com/updates/version.json";
+    private static readonly string ExeUrl = OperatingSystem.IsMacOS()
+        ? "https://tensorlay.com/updates/mac/TensorLay-mac.zip"
+        : "https://tensorlay.com/updates/GpuHub.exe";
 
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromMinutes(10) };
     private bool _disposed;
@@ -23,7 +30,9 @@ public class AutoUpdater : IDisposable
     public event Action<string>? UpdateLog;
     public event Action<double>? DownloadProgress;
 
-    public string CurrentVersion => Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
+    // Entry assembly = the front-end exe that carries the release version
+    // (this class lives in TensorLay.Core).
+    public string CurrentVersion => Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0";
 
     public async Task<(bool available, string? newVersion)> CheckForUpdate()
     {
@@ -71,7 +80,8 @@ public class AutoUpdater : IDisposable
             }
 
             // Download to temp folder (avoids permission issues on Desktop/Program Files)
-            var tempPath = Path.Combine(Path.GetTempPath(), "TensorLay_update.exe");
+            var tempPath = Path.Combine(Path.GetTempPath(),
+                OperatingSystem.IsMacOS() ? "TensorLay_update.zip" : "TensorLay_update.exe");
             var backupPath = currentExe + ".backup";
 
             UpdateLog?.Invoke("Downloading update...");
@@ -106,6 +116,9 @@ public class AutoUpdater : IDisposable
             }
 
             UpdateLog?.Invoke("Applying update...");
+
+            if (OperatingSystem.IsMacOS())
+                return await ApplyMacUpdate(currentExe, tempPath);
 
             int callerPid = Environment.ProcessId;
             var scriptPath = Path.Combine(Path.GetTempPath(), "tensorlay_update.ps1");
@@ -189,6 +202,100 @@ public class AutoUpdater : IDisposable
         {
             LastError = ex.Message;
             UpdateLog?.Invoke($"Update failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    // macOS: the payload is a zipped TensorLay.app. Unpack it next to the
+    // download with ditto (keeps the code signature, symlinks and exec bits
+    // that a plain unzip can mangle), then hand off to a detached sh script
+    // that waits for this process to exit, swaps the bundle in place, and
+    // relaunches it via `open`. Files fetched by HttpClient carry no
+    // quarantine flag, so the new bundle opens without a Gatekeeper prompt.
+    private async Task<bool> ApplyMacUpdate(string currentExe, string zipPath)
+    {
+        // .../TensorLay.app/Contents/MacOS/TensorLay -> .../TensorLay.app
+        string? bundle = Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(currentExe)));
+        if (bundle is null || !bundle.EndsWith(".app", StringComparison.OrdinalIgnoreCase))
+        {
+            LastError = "Not running from an .app bundle — download the new version from tensorlay.com instead.";
+            return false;
+        }
+        string? parent = Path.GetDirectoryName(bundle);
+        if (parent is null || !IsWritableDirectory(parent))
+        {
+            LastError = $"No write access to {parent} — move TensorLay to your Applications folder (or reinstall it) and try again.";
+            return false;
+        }
+
+        string stage = Path.Combine(Path.GetTempPath(), "TensorLay_update_stage");
+        try { if (Directory.Exists(stage)) Directory.Delete(stage, recursive: true); } catch { /* best-effort */ }
+        Directory.CreateDirectory(stage);
+
+        var ditto = Process.Start(new ProcessStartInfo("/usr/bin/ditto")
+        {
+            ArgumentList = { "-x", "-k", zipPath, stage },
+            UseShellExecute = false,
+            RedirectStandardError = true,
+        });
+        if (ditto is null)
+        {
+            LastError = "Could not run ditto to unpack the update.";
+            return false;
+        }
+        string dittoErr = await ditto.StandardError.ReadToEndAsync();
+        await ditto.WaitForExitAsync();
+        string newBundle = Path.Combine(stage, "TensorLay.app");
+        if (ditto.ExitCode != 0 || !Directory.Exists(newBundle))
+        {
+            LastError = $"Unpacking the update failed: {dittoErr.Trim()}";
+            return false;
+        }
+
+        // Single-quote for sh; a ' inside the path becomes '\''.
+        static string Q(string s) => "'" + s.Replace("'", "'\\''") + "'";
+        string backup = bundle + ".previous";
+        string script = $$"""
+            #!/bin/sh
+            # Wait (max ~30 s) for the running TensorLay to exit.
+            i=0
+            while kill -0 {{Environment.ProcessId}} 2>/dev/null && [ $i -lt 60 ]; do sleep 0.5; i=$((i+1)); done
+            rm -rf {{Q(backup)}}
+            if mv {{Q(bundle)}} {{Q(backup)}} && mv {{Q(newBundle)}} {{Q(bundle)}}; then
+              rm -rf {{Q(backup)}}
+            else
+              # Roll back so the user is never left without an app.
+              [ -d {{Q(bundle)}} ] || mv {{Q(backup)}} {{Q(bundle)}}
+            fi
+            rm -f {{Q(zipPath)}}
+            open {{Q(bundle)}}
+            rm -f "$0"
+            """;
+        string scriptPath = Path.Combine(Path.GetTempPath(), "tensorlay_update.sh");
+        File.WriteAllText(scriptPath, script.Replace("\r\n", "\n"));
+
+        // nohup + own session: the script must outlive this process.
+        Process.Start(new ProcessStartInfo("/bin/sh")
+        {
+            ArgumentList = { "-c", $"nohup /bin/sh {Q(scriptPath)} >/dev/null 2>&1 &" },
+            UseShellExecute = false,
+        });
+
+        UpdateLog?.Invoke("Restarting...");
+        return true;
+    }
+
+    private static bool IsWritableDirectory(string dir)
+    {
+        try
+        {
+            string probe = Path.Combine(dir, $".tensorlay-write-test-{Environment.ProcessId}");
+            File.WriteAllText(probe, "");
+            File.Delete(probe);
+            return true;
+        }
+        catch
+        {
             return false;
         }
     }

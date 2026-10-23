@@ -4,6 +4,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using TensorLay.Models;
+using TensorLay.Platform;
 
 namespace TensorLay.Services;
 
@@ -82,7 +83,7 @@ public class ProcessManager : IDisposable
         string? venvDir = null;
         if (service.UsesVenv)
         {
-            string venvPython = Path.Combine(workingDir, ".venv", "Scripts", "python.exe");
+            string venvPython = PlatformEnv.VenvPython(Path.Combine(workingDir, ".venv"));
             if (File.Exists(venvPython))
             {
                 startExe = venvPython;
@@ -143,7 +144,7 @@ public class ProcessManager : IDisposable
         // and set VIRTUAL_ENV (+ clear PYTHONHOME, which would override it).
         if (venvDir is not null)
         {
-            string scriptsDir = Path.Combine(venvDir, "Scripts");
+            string scriptsDir = PlatformEnv.VenvBinDir(venvDir);
             string existingPath = psi.EnvironmentVariables["PATH"] ?? "";
             psi.EnvironmentVariables["PATH"] = scriptsDir + Path.PathSeparator + existingPath;
             psi.EnvironmentVariables["VIRTUAL_ENV"] = venvDir;

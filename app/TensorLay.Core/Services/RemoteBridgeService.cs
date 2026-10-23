@@ -216,6 +216,14 @@ public class RemoteBridgeService : IDisposable
                         hostname = Environment.MachineName,
                         user = Environment.UserName,
                         cwd = Directory.GetCurrentDirectory(),
+                        // Lets the VPS client pick command syntax: "windows"
+                        // (powershell/cmd) or "macos" (zsh/bash/sh).
+                        os = OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linux",
+                        shells = OperatingSystem.IsWindows()
+                            ? new[] { "powershell", "cmd" }
+                            : new[] { "zsh", "bash", "sh" },
+                        defaultShell = NormalizeShell(""),
+                        home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                     });
                     break;
                 case "/bridge/exec":
@@ -284,7 +292,8 @@ public class RemoteBridgeService : IDisposable
     }
 
     // ── exec ────────────────────────────────────────────────────────────────
-    // Body: { "command": "...", "shell": "powershell"|"cmd", "cwd": "...",
+    // Body: { "command": "...", "shell": "powershell"|"cmd" (Windows) or
+    //         "zsh"|"bash"|"sh" (macOS), "cwd": "...",
     //         "timeoutSec": 60 }. Runs synchronously, waits up to timeout,
     //         kills the whole process tree on timeout.
     private async Task HandleExec(HttpListenerContext ctx, CancellationToken ct)
@@ -296,7 +305,7 @@ public class RemoteBridgeService : IDisposable
             await WriteJson(ctx, 400, new { error = "missing 'command'" });
             return;
         }
-        string shell = GetString(body, "shell", "powershell").ToLowerInvariant();
+        string shell = NormalizeShell(GetString(body, "shell", ""));
         string? cwd = GetString(body, "cwd", "");
         int timeoutSec = GetInt(body, "timeoutSec", 60);
         if (timeoutSec < 1) timeoutSec = 1;
@@ -388,7 +397,7 @@ public class RemoteBridgeService : IDisposable
             await WriteJson(ctx, 400, new { error = "missing 'command'" });
             return;
         }
-        string shell = GetString(body, "shell", "powershell").ToLowerInvariant();
+        string shell = NormalizeShell(GetString(body, "shell", ""));
         string? cwd = GetString(body, "cwd", "");
 
         var psi = BuildShellStartInfo(shell, command, cwd);
@@ -566,6 +575,18 @@ public class RemoteBridgeService : IDisposable
     }
 
     // ── shell plumbing ────────────────────────────────────────────────────────
+    // Map the requested shell onto what this OS has. Windows: powershell
+    // (default) or cmd. macOS/Linux: zsh (default), bash or sh — a request for
+    // powershell/cmd from an older client that always sent one falls back to
+    // the default shell rather than failing.
+    private static string NormalizeShell(string requested)
+    {
+        string s = (requested ?? "").Trim().ToLowerInvariant();
+        if (OperatingSystem.IsWindows())
+            return s == "cmd" ? "cmd" : "powershell";
+        return s is "bash" or "sh" or "zsh" ? s : "zsh";
+    }
+
     private static ProcessStartInfo BuildShellStartInfo(string shell, string command, string? cwd)
     {
         var psi = new ProcessStartInfo
@@ -580,7 +601,22 @@ public class RemoteBridgeService : IDisposable
         if (!string.IsNullOrWhiteSpace(cwd) && Directory.Exists(cwd))
             psi.WorkingDirectory = cwd;
 
-        if (shell == "cmd")
+        if (!OperatingSystem.IsWindows())
+        {
+            // Login shell (-l) so the agent sees the same PATH as Terminal
+            // (Homebrew's shellenv lives in ~/.zprofile); the command goes in
+            // as a single argv entry, so no quoting layer to escape.
+            psi.FileName = shell switch
+            {
+                "bash" => "/bin/bash",
+                "sh" => "/bin/sh",
+                _ => "/bin/zsh",
+            };
+            if (shell != "sh") psi.ArgumentList.Add("-l");
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add(command);
+        }
+        else if (shell == "cmd")
         {
             psi.FileName = "cmd.exe";
             // /c with the command as a single argument; cmd handles its own
@@ -666,7 +702,7 @@ public class RemoteBridgeService : IDisposable
         return Convert.ToBase64String(buf).Replace('+', '-').Replace('/', '_').TrimEnd('=');
     }
 
-    public const string BridgeVersion = "1.0.0";
+    public const string BridgeVersion = "1.1.0";
 
     public void Dispose()
     {
