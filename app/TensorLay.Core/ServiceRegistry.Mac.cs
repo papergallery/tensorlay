@@ -134,6 +134,7 @@ public static partial class ServiceRegistry
             PreInstallCommands = new List<string>
             {
                 "-3.10 -m pip install torch==2.3.1 torchvision==0.18.1",
+                Gradio4FastApiPin,
                 "-3.10 -m pip install scikit-build-core pybind11 cmake ninja"
             },
             // xatlas==0.0.9 has no macOS arm64 wheel and its sdist bundles a
@@ -210,7 +211,7 @@ public static partial class ServiceRegistry
             PreInstallCommands = new List<string>
             {
                 "-3.10 -m pip install torch==2.1.0 torchaudio==2.1.0 torchvision==0.16.0",
-                MusicGenFastApiPin,
+                Gradio4FastApiPin,
                 "-3.10 -c \"f='requirements.txt';s=open(f,encoding='utf-8').read();s=s.replace('av==11.0.0','av>=12,<14').replace('transformers>=4.31.0','transformers>=4.31.0,<4.41').replace('gradio','gradio>=4.0,<4.37').replace('xformers<0.0.23','').replace('spacy==3.7.6','spacy==3.7.5');open(f,'w',encoding='utf-8').write(s)\""
             },
             PostInstallCommands = new List<string>

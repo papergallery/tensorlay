@@ -162,6 +162,7 @@ public static partial class ServiceRegistry
                 // the same wheel set that Forge uses. RTX 30/40 ok; RTX 50
                 // gets the cu121 warning from GpuMonitor (Forge path).
                 "-3.10 -m pip install --force-reinstall torch==2.3.1+cu121 torchvision==0.18.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121",
+                Gradio4FastApiPin,
                 // Build tooling for torchmcubes (see PostInstall).
                 "-3.10 -m pip install scikit-build-core pybind11 cmake ninja"
             },
@@ -320,7 +321,7 @@ public static partial class ServiceRegistry
                 // it back to 2.1.0 anyway, leaving an incoherent env. Install the
                 // 2.1.0 CUDA stack directly so requirements.txt is satisfied as-is.
                 "-3.10 -m pip install --force-reinstall torch==2.1.0+cu121 torchaudio==2.1.0+cu121 torchvision==0.16.0+cu121 --extra-index-url https://download.pytorch.org/whl/cu121",
-                MusicGenFastApiPin,
+                Gradio4FastApiPin,
                 // Relax three upstream pins that no longer resolve cleanly in 2026.
                 // setup.py reads requirements.txt for install_requires, so this single
                 // rewrite fixes BOTH the `pip install -r` step and the editable
@@ -534,14 +535,14 @@ public static partial class ServiceRegistry
         "-m pip install --no-build-isolation https://github.com/mlfoundations/open_clip/archive/bb6e834e9c70d9c27d0dc3ecedeebeaeb1ffad6b.zip",
     };
 
-    // audiocraft's demo runs on gradio 4.36 (capped in the requirements
-    // rewrite), whose index route calls Starlette's old
-    // TemplateResponse(name, context) form. Current FastAPI pulls a Starlette
-    // without it and every page 500s ("unhashable type: 'dict'"), which
-    // gradio reports as "localhost is not accessible" and exits. fastapi
-    // 0.112.4 caps starlette <0.39. Installed before requirements.txt so the
-    // resolver keeps it.
-    private const string MusicGenFastApiPin = "-3.10 -m pip install \"fastapi==0.112.4\"";
+    // gradio 4.x demos (MusicGen: capped at 4.36 by the requirements rewrite;
+    // TripoSR: held at 4.8 by transformers 4.35's huggingface-hub ceiling)
+    // render their index page with Starlette's old TemplateResponse(name,
+    // context) form. Current FastAPI pulls a Starlette without it and every
+    // page 500s ("unhashable type: 'dict'"), which gradio reports as
+    // "localhost is not accessible" and exits. fastapi 0.112.4 caps starlette
+    // <0.39. Installed before requirements.txt so the resolver keeps it.
+    private const string Gradio4FastApiPin = "-3.10 -m pip install \"fastapi==0.112.4\"";
 
     // torchmcubes, pinned (2026-09-10 merge) and installed without build
     // isolation by both catalogues; see the TripoSR entries.
