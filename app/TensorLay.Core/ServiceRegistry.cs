@@ -518,8 +518,17 @@ public static partial class ServiceRegistry
     // build isolation — against the venv's setuptools 69.5.1 pinned by
     // requirements_versions.txt — from the exact URLs launch_utils.py uses;
     // launch.py then finds them installed and skips its own attempt.
+    //
+    // Forge's built-in ControlNet/preprocessor extensions likewise pip-install
+    // fvcore, mediapipe, onnxruntime, opencv-python>=4.8 and svglib UNPINNED
+    // on first start. Current mediapipe/opencv pull numpy 2.x over Forge's
+    // numpy==1.26.2, and scikit-image 0.21 (built for numpy 1) then dies on
+    // import ("numpy.dtype size changed"). Install them here in one resolve
+    // together with numpy==1.26.2 so pip picks numpy-1-compatible versions;
+    // the extensions' install.py sees them present and leaves them alone.
     private static List<string> ForgeLaunchPackages() => new()
     {
+        "-m pip install fvcore mediapipe onnxruntime svglib \"opencv-python>=4.8.0\" \"numpy==1.26.2\"",
         "-m pip install wheel",
         "-m pip install --no-build-isolation https://github.com/openai/CLIP/archive/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1.zip",
         "-m pip install --no-build-isolation https://github.com/mlfoundations/open_clip/archive/bb6e834e9c70d9c27d0dc3ecedeebeaeb1ffad6b.zip",
@@ -543,6 +552,9 @@ public static partial class ServiceRegistry
     {
         // NormalizePackageName("git+https://github.com/tatsy/torchmcubes.git")
         { "git+https://github-com/tatsy/torchmcubes-git", "" },
+        // rembg moved its onnxruntime dependency into extras; without one
+        // gradio_app.py dies on `import rembg` (No module named 'onnxruntime').
+        { "rembg", "rembg[cpu]" },
     };
 
     // AllTalk's requirement swaps and start-time source patches are the same
