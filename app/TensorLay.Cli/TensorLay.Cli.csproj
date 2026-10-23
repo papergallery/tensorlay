@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Headless driver for TensorLay.Core: installs and starts services through
+       the exact InstallerService / ProcessManager / HealthCheckService code the
+       desktop apps use. Exists so CI (and a developer on any OS) can verify a
+       service recipe end to end without a GUI — e.g. the macOS install matrix
+       in .github/workflows/mac.yml. Not shipped to users. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TensorLay.Cli</RootNamespace>
+    <AssemblyName>tensorlay-cli</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TensorLay.Core\TensorLay.Core.csproj" />
+  </ItemGroup>
+
+</Project>

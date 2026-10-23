@@ -1,20 +1,60 @@
-
+﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TensorLay", "TensorLay\TensorLay.csproj", "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TensorLay.Core", "TensorLay.Core\TensorLay.Core.csproj", "{17DD7FCC-B6E4-4BBE-99FE-2D1DD04F21D8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TensorLay.Cli", "TensorLay.Cli\TensorLay.Cli.csproj", "{4BC966A5-1F71-49F4-A7D6-45310AF4005D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
 		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Debug|x64.Build.0 = Debug|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Debug|x86.Build.0 = Debug|Any CPU
 		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Release|x64.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Release|x64.Build.0 = Release|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Release|x86.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Release|x86.Build.0 = Release|Any CPU
+		{17DD7FCC-B6E4-4BBE-99FE-2D1DD04F21D8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{17DD7FCC-B6E4-4BBE-99FE-2D1DD04F21D8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{17DD7FCC-B6E4-4BBE-99FE-2D1DD04F21D8}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{17DD7FCC-B6E4-4BBE-99FE-2D1DD04F21D8}.Debug|x64.Build.0 = Debug|Any CPU
+		{17DD7FCC-B6E4-4BBE-99FE-2D1DD04F21D8}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{17DD7FCC-B6E4-4BBE-99FE-2D1DD04F21D8}.Debug|x86.Build.0 = Debug|Any CPU
+		{17DD7FCC-B6E4-4BBE-99FE-2D1DD04F21D8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{17DD7FCC-B6E4-4BBE-99FE-2D1DD04F21D8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{17DD7FCC-B6E4-4BBE-99FE-2D1DD04F21D8}.Release|x64.ActiveCfg = Release|Any CPU
+		{17DD7FCC-B6E4-4BBE-99FE-2D1DD04F21D8}.Release|x64.Build.0 = Release|Any CPU
+		{17DD7FCC-B6E4-4BBE-99FE-2D1DD04F21D8}.Release|x86.ActiveCfg = Release|Any CPU
+		{17DD7FCC-B6E4-4BBE-99FE-2D1DD04F21D8}.Release|x86.Build.0 = Release|Any CPU
+		{4BC966A5-1F71-49F4-A7D6-45310AF4005D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4BC966A5-1F71-49F4-A7D6-45310AF4005D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4BC966A5-1F71-49F4-A7D6-45310AF4005D}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{4BC966A5-1F71-49F4-A7D6-45310AF4005D}.Debug|x64.Build.0 = Debug|Any CPU
+		{4BC966A5-1F71-49F4-A7D6-45310AF4005D}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{4BC966A5-1F71-49F4-A7D6-45310AF4005D}.Debug|x86.Build.0 = Debug|Any CPU
+		{4BC966A5-1F71-49F4-A7D6-45310AF4005D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4BC966A5-1F71-49F4-A7D6-45310AF4005D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4BC966A5-1F71-49F4-A7D6-45310AF4005D}.Release|x64.ActiveCfg = Release|Any CPU
+		{4BC966A5-1F71-49F4-A7D6-45310AF4005D}.Release|x64.Build.0 = Release|Any CPU
+		{4BC966A5-1F71-49F4-A7D6-45310AF4005D}.Release|x86.ActiveCfg = Release|Any CPU
+		{4BC966A5-1F71-49F4-A7D6-45310AF4005D}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

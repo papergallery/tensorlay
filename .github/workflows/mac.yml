@@ -1,0 +1,70 @@
+name: mac
+
+# macOS (Apple Silicon) verification for the TensorLay.Mac port.
+#
+# services: installs and starts every service from ServiceRegistry.Mac on a
+#   clean GitHub-hosted arm64 Mac, through tensorlay-cli — the same
+#   InstallerService / ProcessManager / HealthCheckService code the app runs.
+#   A job passes when the service's health endpoint answers 2xx. Hosted Macs
+#   are VMs without Metal/MPS, so services run on the CPU here; this checks
+#   that the recipes install and boot, not GPU speed.
+
+on:
+  push:
+    branches: [mac-port]
+    paths:
+      - 'app/TensorLay.Core/**'
+      - 'app/TensorLay.Cli/**'
+      - '.github/workflows/mac.yml'
+  workflow_dispatch:
+    inputs:
+      services:
+        description: 'JSON list of service ids to test'
+        default: '["comfyui","ollama","whisper","f5-tts","alltalk","musicgen","triposr","sd-forge"]'
+
+jobs:
+  services:
+    runs-on: macos-15
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(github.event.inputs.services || '["comfyui","ollama","whisper","f5-tts","alltalk","musicgen","triposr","sd-forge"]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Machine
+        run: |
+          sw_vers; uname -m; sysctl -n machdep.cpu.brand_string; df -h ~ | tail -1
+          xcode-select -p
+
+      - name: Build CLI
+        run: dotnet build app/TensorLay.Cli/TensorLay.Cli.csproj -c Release
+
+      - name: Install ${{ matrix.service }}
+        run: |
+          set -o pipefail
+          dotnet app/TensorLay.Cli/bin/Release/net8.0/tensorlay-cli.dll install ${{ matrix.service }} \
+            --dir "$HOME/ai-hub" 2>&1 | tee install.log
+
+      - name: Start ${{ matrix.service }}
+        run: |
+          set -o pipefail
+          dotnet app/TensorLay.Cli/bin/Release/net8.0/tensorlay-cli.dll start ${{ matrix.service }} \
+            --dir "$HOME/ai-hub" --health-timeout 1800 2>&1 | tee start.log
+
+      - name: Disk after
+        if: always()
+        run: df -h ~ | tail -1; du -sh "$HOME/ai-hub"/* 2>/dev/null || true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.service }}
+          path: '*.log'
